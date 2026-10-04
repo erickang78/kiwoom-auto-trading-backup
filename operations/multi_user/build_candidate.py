@@ -111,6 +111,8 @@ def build(source: Path, output: Path, tenant_id: str, origin: str, api_port: int
             content = content.replace("User=ubuntu", f"User=kiwoom-{tenant_id}")
             if "\nUser=" not in content:
                 content = content.replace("[Service]\n", f"[Service]\nUser=kiwoom-{tenant_id}\n", 1)
+            if "\nUMask=" not in content:
+                content = content.replace("[Service]\n", "[Service]\nUMask=0077\n", 1)
             (candidate / "config/systemd" / f"{name}@{tenant_id}.service").write_text(content)
         # The existing refresh service has a drop-in allowing state writes.
         # Fold that permission into this standalone pilot unit.

@@ -32,6 +32,7 @@ class PilotBundleTest(unittest.TestCase):
         self.assertTrue((self.output / "root/invite_user.py").is_file())
         for unit in (self.output / "config/systemd").glob("*.service"):
             self.assertIn("User=kiwoom-pilot-001", unit.read_text(), unit.name)
+            self.assertIn("UMask=0077", unit.read_text(), unit.name)
         self.assertFalse(any(path.name.endswith((".db", ".sqlite3")) for path in self.output.rglob("*")))
 
     def test_refuses_production_ports_and_existing_output(self):
