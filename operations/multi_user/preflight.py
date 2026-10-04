@@ -21,6 +21,8 @@ FILES = {
 }
 PRIVATE_NAMES = {
     "dashboard-token",
+    "session-signing-key",
+    "tenant-auth.sqlite3",
     "real-credentials.json",
     "mock-credentials.json",
     "gold-credentials.json",

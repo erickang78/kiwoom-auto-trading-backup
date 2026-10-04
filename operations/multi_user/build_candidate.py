@@ -85,10 +85,14 @@ def build(source: Path, output: Path, tenant_id: str, origin: str, api_port: int
             content = transform(path.read_text(), tenant_root=tenant_root, origin=origin, api_port=api_port, gateway_port=gateway_port)
             ast.parse(content, filename=path.name)
             (candidate / "current" / path.name).write_text(content)
-        gateway = source / "root/dashboard_gateway.py"
+        gateway = Path(__file__).with_name("tenant_gateway.py")
         gateway_text = transform(gateway.read_text(), tenant_root=tenant_root, origin=origin, api_port=api_port, gateway_port=gateway_port)
         ast.parse(gateway_text, filename=gateway.name)
-        (candidate / "root" / gateway.name).write_text(gateway_text)
+        (candidate / "root/dashboard_gateway.py").write_text(gateway_text)
+        for support in ("tenant_auth.py", "invite_user.py"):
+            support_text = transform(Path(__file__).with_name(support).read_text(), tenant_root=tenant_root, origin=origin, api_port=api_port, gateway_port=gateway_port)
+            ast.parse(support_text, filename=support)
+            (candidate / "root" / support).write_text(support_text)
         page = source / "dashboard/dist/index.html"
         page_text = transform(generic_dashboard(page.read_text()), tenant_root=tenant_root, origin=origin, api_port=api_port, gateway_port=gateway_port)
         (candidate / "dashboard/dist/index.html").write_text(page_text)
