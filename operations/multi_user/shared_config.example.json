@@ -1,0 +1,20 @@
+{
+  "origin": "https://example.invalid",
+  "port": 8898,
+  "tenants": {
+    "owner": {
+      "dashboard_root": "/opt/kiwoom/dashboard-source/dist",
+      "api_port": 8787,
+      "backend_token_file": "/opt/kiwoom/secrets/dashboard-token",
+      "backend_origin": "https://moa-invest-sep22.erickang78.chatgpt.site",
+      "backup_status_file": "/opt/kiwoom/backup_status.py",
+      "extra_script_file": "/opt/kiwoom/backup-tools/dashboard-status.js"
+    },
+    "pilot-001": {
+      "dashboard_root": "/opt/kiwoom/shared-router/assets/pilot-001",
+      "api_port": 8887,
+      "backend_token_file": "/opt/kiwoom/shared-router/secrets/pilot-backend-token",
+      "backend_origin": "https://pilot-001.example.invalid"
+    }
+  }
+}

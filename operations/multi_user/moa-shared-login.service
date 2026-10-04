@@ -1,0 +1,21 @@
+[Unit]
+Description=Shared login router for isolated Kiwoom users
+After=network.target kiwoom-refresh.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/kiwoom/shared-router
+ExecStart=/usr/bin/python3 /opt/kiwoom/shared-router/shared_gateway.py --root /opt/kiwoom/shared-router
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/kiwoom/dashboard-source /opt/kiwoom/secrets /opt/kiwoom/backup-tools /opt/kiwoom/backup_status.py
+ReadWritePaths=/opt/kiwoom/shared-router/secrets
+
+[Install]
+WantedBy=multi-user.target
