@@ -1,0 +1,15 @@
+[Unit]
+Description=Moa private dashboard gateway
+After=network.target kiwoom-refresh.service
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/kiwoom
+ExecStart=/usr/bin/python3 /opt/kiwoom/dashboard_gateway.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=Personal Kakao automatic trade fill notifications
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/kiwoom/current
+ExecStart=/opt/kiwoom/.venv/bin/python /opt/kiwoom/current/kakao_notifications.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/kiwoom/current /opt/kiwoom/secrets
+ReadWritePaths=/opt/kiwoom/state
+[Install]
+WantedBy=multi-user.target

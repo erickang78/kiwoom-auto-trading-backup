@@ -1,0 +1,16 @@
+[Unit]
+Description=Real trading daily performance observer
+After=moa-auto-trading.service
+[Service]
+Type=simple
+WorkingDirectory=/opt/kiwoom/current
+ExecStart=/usr/bin/python3 /opt/kiwoom/current/auto_performance_history.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/kiwoom/state
+[Install]
+WantedBy=multi-user.target
