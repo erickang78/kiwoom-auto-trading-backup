@@ -82,10 +82,8 @@ def metric(config,credentials,value,opener=urlopen):
 
 def object_keys(now):
     local=now.astimezone(ZoneInfo('Asia/Seoul'));uid=now.strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex+'.cms'
-    keys=['hourly/'+local.strftime('%Y/%m/%d/')+uid]
-    if local.hour==1:
-        keys.append('daily/'+local.strftime('%Y/%m/%d/')+uid)
-        if local.day==1:keys.append('monthly/'+local.strftime('%Y/%m/')+uid)
+    keys=['daily/'+local.strftime('%Y/%m/%d/')+uid]
+    if local.day==1:keys.append('monthly/'+local.strftime('%Y/%m/')+uid)
     return keys
 
 def write_status(path,value):

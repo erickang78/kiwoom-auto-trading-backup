@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily sanitized production source backup to private GitHub
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 /opt/kiwoom/backup-tools/backup_code.py
+TimeoutStartSec=15min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/kiwoom/code-backup /opt/kiwoom/backup-status
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily code backup at 01:10 Korea time
+[Timer]
+OnCalendar=*-*-* 01:10:00 Asia/Seoul
+AccuracySec=1s
+Persistent=true
+Unit=kiwoom-code-backup.service
+[Install]
+WantedBy=timers.target

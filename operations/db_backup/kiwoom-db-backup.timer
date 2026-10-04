@@ -1,7 +1,7 @@
 [Unit]
-Description=Hourly private trading database backup
+Description=Daily private trading database backup
 [Timer]
-OnCalendar=*-*-* *:05:00 Asia/Seoul
+OnCalendar=*-*-* 01:05:00 Asia/Seoul
 RandomizedDelaySec=60
 Persistent=true
 Unit=kiwoom-db-backup.service

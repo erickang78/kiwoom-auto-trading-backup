@@ -41,8 +41,8 @@ class BackupTests(unittest.TestCase):
     def test_existing_destination_refused(self):
         with self.assertRaises(ValueError):restore('unused',self.key,self.passphrase,self.state)
     def test_kst_retention_categories(self):
-        self.assertEqual(len(object_keys(dt.datetime(2026,9,30,16,tzinfo=dt.timezone.utc))),3)
-        self.assertEqual(len(object_keys(dt.datetime(2026,10,2,16,tzinfo=dt.timezone.utc))),2)
+        self.assertEqual(len(object_keys(dt.datetime(2026,9,30,16,tzinfo=dt.timezone.utc))),2)
+        self.assertEqual(len(object_keys(dt.datetime(2026,10,2,16,tzinfo=dt.timezone.utc))),1)
         self.assertEqual(len(object_keys(dt.datetime(2026,10,2,17,tzinfo=dt.timezone.utc))),1)
     def test_upload_requires_server_checksum_and_version(self):
         self.stage.joinpath('blob').write_bytes(b'encrypted fixture')
