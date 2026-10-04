@@ -106,6 +106,18 @@ class SharedGatewayTest(unittest.TestCase):
         self.assertEqual(self.request("POST", "/logout", headers={"Cookie": cookie, "Origin": "https://shared.example.test"})[0], 303)
         self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": cookie})[0], 401)
 
+    def test_password_change_requires_current_password_and_revokes_sessions(self):
+        cookie = self.login("owner", "owner-private-password")
+        other_cookie = self.login("owner", "owner-private-password")
+        self.assertEqual(self.request("GET", "/change-password")[0], 200)
+        self.assertEqual(self.request("POST", "/change-password", urlencode({"current_password": "wrong", "new_password": "new-private-password"}), {"Cookie": cookie, "Origin": "https://shared.example.test"})[0], 401)
+        self.assertEqual(self.request("POST", "/change-password", urlencode({"current_password": "owner-private-password", "new_password": "new-private-password"}), {"Cookie": cookie, "Origin": "https://evil.example.test"})[0], 403)
+        self.assertEqual(self.request("POST", "/change-password", urlencode({"current_password": "owner-private-password", "new_password": "new-private-password"}), {"Cookie": cookie, "Origin": "https://shared.example.test"})[0], 303)
+        self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": cookie})[0], 401)
+        self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": other_cookie})[0], 401)
+        self.assertIsNone(self.auth.login("owner", "owner-private-password"))
+        self.assertIsNotNone(self.auth.login("owner", "new-private-password"))
+
 
 if __name__ == "__main__":
     unittest.main()
