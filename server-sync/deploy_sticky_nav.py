@@ -1,0 +1,3 @@
+from pathlib import Path
+import shutil,datetime
+p=Path('/opt/kiwoom/dashboard-source/dist/index.html');s=p.read_text();assert 'id="sticky-primary-nav"' not in s;suffix='.before-sticky-nav-'+datetime.datetime.now().strftime('%Y%m%d%H%M%S');shutil.copy2(p,str(p)+suffix);p.write_text(s.replace('</body>','<style id="sticky-primary-nav">.primary-nav{position:sticky;top:0;z-index:100;background:#f4f6fb;padding-top:10px;padding-bottom:2px;box-shadow:0 4px 10px #14223608}</style>\n</body>'));print('STICKY_NAV_DEPLOYED',suffix)

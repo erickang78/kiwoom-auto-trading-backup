@@ -1,0 +1,32 @@
+
+AWS-대시보드-접속.html
+__pycache__/
+
+# Private credentials, live data, and historical copies
+.private-backups/
+.env
+.env.*
+!.env.example
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.pem
+*.key
+*credentials*.json
+*token*.json
+*token*.txt
+*.before-*
+*.bak*
+
+# Deployment payloads, private operation notes and account screenshots
+.openai/
+.aws/
+*.b64
+*payload*.json
+server-sync/*.png
+operations/*.png
+AWS_DASHBOARD.md
+CONTINUATION.md
+SITES_RECOVERY.md
+.DS_Store

@@ -1,0 +1,16 @@
+from pathlib import Path
+import base64,json,shutil,datetime
+p=Path('/opt/kiwoom/dashboard-source/dist/index.html')
+s=p.read_text()
+pairs=json.loads(base64.b64decode('W1siIGNvbnN0IHJlY29yZHM9ZXZlbnRSZWNvcmRzLmZpbHRlcihlPT5ldmVudFNpZGU9PT0nU0VMTCc/ZS5raW5kPT09J1NFTEwnOmUua2luZD09PSdCVVknfHxlLmtpbmQ9PT0nU0tJUCcpOyIsICIgY29uc3QgcmVjb3Jkcz1ldmVudFJlY29yZHMuZmlsdGVyKGU9PihldmVudFNpZGU9PT0nU0VMTCc/ZS5raW5kPT09J1NFTEwnOmUua2luZD09PSdCVVknfHxlLmtpbmQ9PT0nU0tJUCcpJiYodHJhZGVUeXBlIT09J3JlYWwnfHxhY3R1YWxGb3IoZSkpKTsiXSwgWyJgPHAgY2xhc3M9XCJzaWduYWwtZW1wdHlcIj5cdWFlMzBcdWI4NWRcdWI0MWMgJHtldmVudFNpZGU9PT0nU0VMTCc/J1x1YjllNFx1YjNjNCc6J1x1YjllNFx1YzIxOCd9IFx1YzJlMFx1ZDYzOFx1YWMwMCBcdWM1YzZcdWMyYjVcdWIyYzhcdWIyZTQuPC9wPmAiLCAidHJhZGVUeXBlPT09J3JlYWwnPyc8cCBjbGFzcz1cInNpZ25hbC1lbXB0eVwiPlx1Yzc3NCBcdWMyZTBcdWQ2MzhcdWM1ZDAgXHVjNWYwXHVhY2IwXHViNDFjIFx1YzJlNFx1YzgxYyBcdWM4ZmNcdWJiMzggXHViMGI0XHVjNWVkXHVjNzc0IFx1YzVjNlx1YzJiNVx1YjJjOFx1YjJlNC48L3A+JzpgPHAgY2xhc3M9XCJzaWduYWwtZW1wdHlcIj5cdWFlMzBcdWI4NWRcdWI0MWMgJHtldmVudFNpZGU9PT0nU0VMTCc/J1x1YjllNFx1YjNjNCc6J1x1YjllNFx1YzIxOCd9IFx1YzJlMFx1ZDYzOFx1YWMwMCBcdWM1YzZcdWMyYjVcdWIyYzhcdWIyZTQuPC9wPmAiXSwgWyJcdWMyZTRcdWM4MWNcdWI5ZTRcdWI5ZTQgXHVjODcwXHVkNjhjXHVjNWQwXHViM2M0IFx1YmJmOFx1YzJlNFx1ZDU4OVx1MDBiN1x1YmJmOFx1YzVmMFx1YWNiMCBcdWMyZTBcdWQ2MzhcdWI5N2MgXHViMGE4XHVhZTQxXHViMmM4XHViMmU0LiIsICJcdWMyZTRcdWM4MWNcdWI5ZTRcdWI5ZTRcdWM1ZDBcdWMxMWNcdWIyOTQgXHVjMmUwXHVkNjM4XHVjNWQwIFx1YzVmMFx1YWNiMFx1YjQxYyBcdWM4ZmNcdWJiMzggXHViMGI0XHVjNWVkXHViOWNjIFx1ZDQ1Y1x1YzJkY1x1ZDU2OVx1YjJjOFx1YjJlNC4iXV0='))
+tag='<script id="signal-validation-module">'
+a=s.index(tag)+len(tag);b=s.index('</script>',a)
+u=s[a:b]
+for x,y in pairs:
+ assert u.count(x)==1,'Live UI differs'
+ u=u.replace(x,y)
+backup=str(p)+'.before-real-filter-'+datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+shutil.copy2(p,backup)
+p.write_text(s[:a]+u+s[b:])
+assert p.read_text()==s[:a]+u+s[b:]
+print('REAL_FILTER_UPDATED',backup)

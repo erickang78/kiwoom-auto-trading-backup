@@ -1,0 +1,3 @@
+from pathlib import Path
+import shutil,datetime
+p=Path('/opt/kiwoom/dashboard-source/dist/index.html');s=p.read_text();assert 'account-footer-note-hidden' not in s;suffix='.before-account-note-hidden-'+datetime.datetime.now().strftime('%Y%m%d%H%M%S');shutil.copy2(p,str(p)+suffix);p.write_text(s.replace('</body>','<style id="account-footer-note-hidden">#panel-real > aside.foot{display:none}</style>\n</body>'));print('ACCOUNT_NOTE_HIDDEN',suffix)

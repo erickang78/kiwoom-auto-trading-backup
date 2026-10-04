@@ -1,0 +1,2 @@
+0 1 * * 1-5 /usr/bin/python3 /opt/kiwoom/current/update_stock_list.py >> /var/log/kiwoom-stock-list.log 2>&1
+0 1 * * * /usr/bin/python3 /opt/kiwoom/current/update_us_stock_list.py >> /var/log/kiwoom-us-stock-list.log 2>&1

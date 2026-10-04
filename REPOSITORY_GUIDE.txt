@@ -1,0 +1,39 @@
+Kiwoom automatic-trading code backup
+
+This repository is a sanitized source backup, not a live database backup.
+The working AWS services are not automatically redeployed by commits or pushes.
+
+Directories
+- server-baseline/: Captured operating server source and configuration, 2026-10-04.
+  Its dashboard HTML and gateway include the verified credential separation.
+  Use this as the production reference; original source hashes are in original-manifest.json.
+- server-sync/: Locally maintained feature modules, tests, historical deployment tools.
+  These are NOT all byte-identical to the running server. See server-baseline/local-comparison.json.
+- moa-site/: Local frontend source and historical implementation tests.
+  Do not overwrite the full server HTML with this folder without reviewing differences.
+- operations/: Capture, validation, and recovery tooling.
+
+Credentials
+Production credentials remain under /opt/kiwoom/secrets on AWS, outside this repository.
+Frontend TOKEN is empty; the authenticated dashboard gateway attaches the existing key server-side.
+No production credentials, account databases, account screenshots, or private Git history may be committed.
+
+Development setup
+After cloning, enable the local pre-commit scanner:
+  git config core.hooksPath .githooks
+Run before committing:
+  python3 operations/check_repository_secrets.py
+  python3 -m unittest discover -s operations -p 'test_*.py'
+The scanner catches known formats and the locally retained legacy token when available.
+It is a safeguard, not proof that arbitrary new secrets cannot enter source.
+
+History
+The nested moa-site Git history included a legacy token and was moved, intact, into a
+local excluded private backup with a verified Git bundle. It must never be pushed.
+This top-level repository begins a new clean history without importing old Git objects.
+
+Recovery
+Clone this code, provision the documented runtime/configuration, and separately restore
+credentials and consistent database backups. Reconcile broker holdings/orders before
+re-enabling order submission. Code rollback alone must never roll back trading data.
+See operations/SOURCE_RECOVERY.txt for the initial capture and rollback details.

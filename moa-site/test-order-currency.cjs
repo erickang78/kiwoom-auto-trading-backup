@@ -1,0 +1,16 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync(__dirname+'/manual-order-ui.js','utf8');
+const functions=source.slice(source.indexOf('function priceUSD()'),source.indexOf('function syncCurrency()'));
+const context=vm.createContext({market:'US',orderCurrency:'USD',orderFx:1367.75,usdValue:'',shownValue:'',input:{value:'100.25'}});
+vm.runInContext('function el(){return input}'+functions,context);
+assert.equal(vm.runInContext('priceUSD()',context),'100.25');
+vm.runInContext("orderCurrency='KRW';showUSD('100.25')",context);
+assert.equal(context.input.value,'137117');
+assert.equal(vm.runInContext('priceUSD()',context),'100.25','display rounding must not alter the dollar limit');
+vm.runInContext("input.value='100000';usdValue='';shownValue=''",context);
+assert.equal(vm.runInContext('priceUSD()',context),'73.1128');
+vm.runInContext("market='KR';input.value='70000'",context);
+assert.equal(vm.runInContext('priceUSD()',context),'70000','domestic prices must not be converted');
+vm.runInContext("market='US';orderFx=0",context);
+assert.equal(vm.runInContext('priceUSD()',context),'','missing FX must not fabricate a dollar limit');
+console.log('Order currency conversion checks passed');
