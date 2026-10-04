@@ -1,5 +1,5 @@
 Full isolated server restore rehearsal — prepared 2026-10-04
-Status: awaiting user approval for temporary server cost and credential restore.
+Status: completed 2026-10-04; see REPORT-20261004.md. Temporary instance and transfer object deleted.
 
 Target: kiwoom-restore-test-20261004 (new, never production instance)
 Region: ap-northeast-2a, Ubuntu 24.04, micro_3_0, 1GB RAM, 40GB disk.
