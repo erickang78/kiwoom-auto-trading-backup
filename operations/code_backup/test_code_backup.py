@@ -18,3 +18,12 @@ class CodeBackupTests(unittest.TestCase):
    path=Path(directory)/'config.json';path.write_text(json.dumps({'region':'ap-northeast-2','credentials':'/opt/secrets/credentials.json','secret_access_key':'private-long-sensitive-value'}))
    values=secret_values(directory);self.assertIn(b'private-long-sensitive-value',values);self.assertNotIn(b'ap-northeast-2',values)
 if __name__=='__main__':unittest.main()
+
+class RequiredCatalogueTests(unittest.TestCase):
+ def test_required_catalogues_are_included_even_if_missing(self):
+  from backup_code import source_files
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory);(root/'current').mkdir()
+   files=source_files(root,root/'systemd')
+   self.assertEqual(files['current/stock-list.json'],root/'current/stock-list.json')
+   self.assertEqual(files['current/us-stock-list.json'],root/'current/us-stock-list.json')

@@ -38,6 +38,9 @@ def source_files(root=ROOT,system=Path('/etc/systemd/system')):
     for path in (root/'current').rglob('*'):
         if path.is_file() and path.suffix in ('.py','.sh','.toml','.ini','.cfg','.txt') and not any(x.startswith('.') or x in ('__pycache__','node_modules','secrets','logs','state') for x in path.relative_to(root/'current').parts):
             files['current/'+str(path.relative_to(root/'current'))]=path
+    # Required reference data: these are public symbol catalogues, not account snapshots.
+    for name in ('stock-list.json','us-stock-list.json'):
+        files['current/'+name]=root/'current'/name
     for path in root.glob('*.py'):files['root/'+path.name]=path
     for path in (root/'dashboard-source/dist').rglob('*'):
         if path.is_file() and path.suffix in ('.html','.js','.css','.svg','.ico') and not any(x.startswith('.') for x in path.relative_to(root/'dashboard-source/dist').parts):

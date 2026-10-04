@@ -1,0 +1,44 @@
+Full isolated server restore rehearsal — prepared 2026-10-04
+Status: awaiting user approval for temporary server cost and credential restore.
+
+Target: kiwoom-restore-test-20261004 (new, never production instance)
+Region: ap-northeast-2a, Ubuntu 24.04, micro_3_0, 1GB RAM, 40GB disk.
+AWS API confirmed bundle price $7/month. Spending authorization requested: at most $1.
+No static IP, snapshots, scheduled backup jobs, DNS change, or production traffic switch.
+
+Sources:
+- GitHub server-daily-backup/server-daily, validate manifest SHA-256.
+- Private S3 latest successful daily DB archive, validate upload SHA-256/version.
+- Private S3 one-time credentials archive, validate receipt SHA-256/version.
+- Recovery key/passphrase stay on the Mac, never copy them to the test server.
+- Locally decrypt in private temporary directory and disable copied trading/notifications.
+- Transfer only the rehearsal copies over authenticated encrypted transport.
+
+Before copying credentials or starting any application:
+- Install runtime dependencies and local reverse proxy.
+- Restrict inbound to operator SSH; no public dashboard.
+- Deny outbound new connections for all application services and globally after setup.
+- Preserve SSH established replies and loopback; verify external connection is blocked.
+- Keep automated trading, notification, backup services/timers and crontab disabled/masked.
+- Root-only backup credentials; app credentials mode 600 with the appropriate service owner.
+
+Verification:
+- All code manifest hashes, 5 database integrity/row counts, 8 credential checksums.
+- Restored DB switches all disabled before worker imports.
+- API and gateway start under systemd and local reverse proxy serves authenticated HTML.
+- Unauthorized access denied; authorized local status/history endpoints return expected data.
+- Domestic and overseas symbol search catalogues available.
+- Real/virtual P&L reports match restored data without broker requests.
+- No order submission, notifications, live account requests, or backup uploads.
+- Record exact tested commit, object versions, limitations and duration in sanitized report.
+
+Cleanup:
+- Keep sanitized report locally/GitHub, no credentials or trading rows.
+- Stop test services and delete test instance only after the user-authorized cleanup mode.
+- Confirm instance deletion and no attached paid resources.
+- Remove transient decrypted copies/staging files; preserve original encrypted backups.
+- Operational recovery still requires broker reconciliation and explicit human resumption.
+
+Preflight finding:
+The daily source backup originally omitted stock-list.json and us-stock-list.json.
+Added these required public catalogues to the backup allowlist; secret scan remains enforced.
