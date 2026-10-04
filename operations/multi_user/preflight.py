@@ -65,6 +65,8 @@ def inspect(root: Path, origin: str) -> list[str]:
                 issues.append("dashboard still contains current operator branding")
         if label == "gateway" and "dashboard-token" not in content:
             issues.append("gateway does not load a private dashboard token")
+        if label == "gateway" and re.search(r"/opt/kiwoom(?=/|['\"])", content):
+            issues.append("gateway still references the operator's data root")
 
     for path in root.rglob("*"):
         if not path.is_file():

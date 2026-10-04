@@ -19,7 +19,7 @@ class TenantPreflightTest(unittest.TestCase):
             f"<html><script>TOKEN=''</script><a href='{ORIGIN}'></a></html>"
         )
         (self.root / "root/dashboard_gateway.py").write_text(
-            f"ORIGIN = '{ORIGIN}'\nKEY = Path('/opt/kiwoom/secrets/dashboard-token')\n"
+            f"ORIGIN = '{ORIGIN}'\nKEY = Path('/opt/kiwoom-tenants/pilot-001/secrets/dashboard-token')\n"
         )
         (self.root / "config/Caddyfile").write_text(f"{ORIGIN} {{ reverse_proxy 127.0.0.1:8788 }}\n")
 
@@ -37,6 +37,11 @@ class TenantPreflightTest(unittest.TestCase):
 
     def test_existing_origin_is_blocked(self):
         self.assertTrue(any("existing operator" in issue for issue in inspect(self.root, "https://example.invalid")))
+
+    def test_original_data_root_is_blocked(self):
+        gateway = self.root / "root/dashboard_gateway.py"
+        gateway.write_text(gateway.read_text() + "AUTH = TenantAuth(Path('/opt/kiwoom'))\n")
+        self.assertTrue(any("operator's data root" in issue for issue in inspect(self.root, ORIGIN)))
 
 
 if __name__ == "__main__":

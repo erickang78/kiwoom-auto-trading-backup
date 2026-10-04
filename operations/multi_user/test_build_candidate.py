@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from build_candidate import build
+from build_candidate import build, generic_dashboard
 from preflight import inspect
 
 
@@ -25,6 +25,8 @@ class PilotBundleTest(unittest.TestCase):
         self.assertNotIn("erickang", page)
         gateway = (self.output / "root/dashboard_gateway.py").read_text()
         self.assertIn("/opt/kiwoom-tenants/pilot-001/secrets/dashboard-token", gateway)
+        self.assertIn("TenantAuth(Path('/opt/kiwoom-tenants/pilot-001'))", gateway)
+        self.assertNotIn("TenantAuth(Path('/opt/kiwoom'))", gateway)
         self.assertIn("'127.0.0.1',8888", gateway)
         self.assertIn("TenantAuth", gateway)
         self.assertIn("if not authenticated and not public_health: return self.respond(401", gateway)
@@ -34,6 +36,12 @@ class PilotBundleTest(unittest.TestCase):
             self.assertIn("User=kiwoom-pilot-001", unit.read_text(), unit.name)
             self.assertIn("UMask=0077", unit.read_text(), unit.name)
         self.assertFalse(any(path.name.endswith((".db", ".sqlite3")) for path in self.output.rglob("*")))
+
+    def test_dashboard_without_optional_creator_credit(self):
+        page = (SOURCE / "dashboard/dist/index.html").read_text()
+        import re
+        page = re.sub(r'<div class="creator-credit"[^>]*>.*?</div>', "", page, flags=re.S)
+        self.assertNotIn("erickang", generic_dashboard(page))
 
     def test_refuses_production_ports_and_existing_output(self):
         with self.assertRaises(ValueError):

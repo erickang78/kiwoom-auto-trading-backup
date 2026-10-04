@@ -33,6 +33,7 @@ SERVICES = (
 def transform(text: str, *, tenant_root: str, origin: str, api_port: int, gateway_port: int) -> str:
     return (
         text.replace(SOURCE_ROOT + "/", tenant_root + "/")
+        .replace("Path('" + SOURCE_ROOT + "')", "Path('" + tenant_root + "')")
         .replace(OLD_ORIGIN, origin)
         .replace(SOURCE_ORIGIN, origin)
         .replace("8787", str(api_port))
@@ -52,7 +53,7 @@ def generic_dashboard(text: str) -> str:
     )
     text, styles = re.subn(r'<style id="ericgolf-brand">.*?</style>', "", text, count=1, flags=re.S)
     text, credits = re.subn(r'<div class="creator-credit"[^>]*>.*?</div>', "", text, count=1, flags=re.S)
-    if (logos, styles, credits) != (1, 1, 1):
+    if logos != 1 or styles != 1 or credits > 1:
         raise ValueError("operator-specific dashboard elements changed; review source")
     if text.count("0000-0000") != 1 or text.count("5190-1567") != 1:
         raise ValueError("operator account labels changed; review source")
@@ -125,7 +126,7 @@ def build(source: Path, output: Path, tenant_id: str, origin: str, api_port: int
         if issues:
             raise ValueError("candidate blocked: " + "; ".join(issues))
         for path in candidate.rglob("*.py"):
-            if SOURCE_ROOT + "/" in path.read_text() or SOURCE_ORIGIN in path.read_text():
+            if re.search(r"/opt/kiwoom(?=/|['\"])", path.read_text()) or SOURCE_ORIGIN in path.read_text():
                 raise ValueError(f"operator path or URL remains in {path.relative_to(candidate)}")
         candidate.rename(output)
 
