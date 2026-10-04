@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import http.client
+import hmac
+import secrets
 import importlib.util
 import json
 import re
@@ -56,7 +58,17 @@ class SharedGateway:
             def respond(self, code, body=b"", kind="text/html; charset=utf-8", extra=None):
                 if isinstance(body, str):
                     body = body.encode()
+                csrf_cookie = None
+                if isinstance(body, bytes) and kind.startswith("text/html") and b"<form" in body:
+                    csrf = self.csrf_cookie()
+                    if not re.fullmatch(r"[A-Za-z0-9_-]{43}", csrf):
+                        csrf = secrets.token_urlsafe(32)
+                    hidden = '<input type="hidden" name="_csrf" value="' + csrf + '">'
+                    body = re.sub(rb"(<form\b[^>]*>)", lambda match: match.group(1) + hidden.encode(), body)
+                    csrf_cookie = "__Host-moa_csrf=" + csrf + "; Path=/; Secure; HttpOnly; SameSite=Strict"
                 self.send_response(code)
+                if csrf_cookie:
+                    self.send_header("Set-Cookie", csrf_cookie)
                 for key, value in {"Content-Type": kind, "Content-Length": str(len(body)), "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", **(extra or {})}.items():
                     self.send_header(key, value)
                 self.end_headers()
@@ -71,6 +83,12 @@ class SharedGateway:
             def token(self):
                 try:
                     return SimpleCookie(self.headers.get("Cookie", ""))["moa_shared_session"].value
+                except (KeyError, ValueError):
+                    return ""
+
+            def csrf_cookie(self):
+                try:
+                    return SimpleCookie(self.headers.get("Cookie", ""))["__Host-moa_csrf"].value
                 except (KeyError, ValueError):
                     return ""
 
@@ -115,6 +133,8 @@ class SharedGateway:
 
             def do_GET(self):
                 path = urlsplit(self.path).path
+                if path == "/login":
+                    return self.respond(200, LOGIN)
                 if path == "/activate":
                     return self.respond(200, ACTIVATE)
                 user = self.user()
@@ -160,19 +180,22 @@ class SharedGateway:
                 if path not in ("/login", "/activate", "/logout", "/change-password"):
                     return self.respond(404, "Not found")
                 origin = self.headers.get("Origin")
-                same_origin = origin == app.origin
-                if origin in (None, "null"):
-                    try:
-                        ref = urlsplit(self.headers.get("Referer", ""))
-                        expected = urlsplit(app.origin)
-                        same_origin = (
-                            ref.scheme == expected.scheme
-                            and ref.netloc.lower() == expected.netloc.lower()
-                            and self.headers.get("Host", "").lower() == expected.netloc.lower()
-                        )
-                    except ValueError:
-                        same_origin = False
-                if not same_origin:
+                if origin not in (None, "null", app.origin):
+                    return self.respond(403, "Forbidden")
+                if self.headers.get("Host", "").lower() != urlsplit(app.origin).netloc.lower():
+                    return self.respond(403, "Forbidden")
+                try:
+                    data = parse_qs(self.body().decode())
+                    supplied_csrf = data.get("_csrf", [""])[0]
+                    cookie_csrf = self.csrf_cookie()
+                    valid_csrf = (
+                        bool(re.fullmatch(r"[A-Za-z0-9_-]{43}", supplied_csrf))
+                        and bool(re.fullmatch(r"[A-Za-z0-9_-]{43}", cookie_csrf))
+                        and hmac.compare_digest(supplied_csrf, cookie_csrf)
+                    )
+                except (UnicodeError, ValueError):
+                    return self.respond(400, "Invalid request")
+                if not valid_csrf:
                     return self.respond(403, "Forbidden")
                 if path == "/logout":
                     app.auth.logout(self.token())
@@ -181,7 +204,6 @@ class SharedGateway:
                     if not self.user():
                         return self.respond(401, LOGIN)
                     try:
-                        data = parse_qs(self.body().decode())
                         changed = app.auth.change_password(self.token(), data.get("current_password", [""])[0], data.get("new_password", [""])[0])
                     except (UnicodeError, ValueError):
                         return self.respond(400, "Invalid request")
@@ -189,7 +211,6 @@ class SharedGateway:
                         return self.respond(401, CHANGE_PASSWORD.replace("<h1>비밀번호 변경</h1>", "<h1>비밀번호 변경</h1><p>현재 비밀번호 또는 새 비밀번호를 확인해 주세요.</p>"))
                     return self.respond(303, extra={"Location": "/", "Set-Cookie": "moa_shared_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict"})
                 try:
-                    data = parse_qs(self.body().decode())
                     username = data.get("username", [""])[0]
                     password = data.get("password", [""])[0]
                 except (UnicodeError, ValueError):

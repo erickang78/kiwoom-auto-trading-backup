@@ -1,11 +1,12 @@
 import http.client
 import json
+import re
 import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, parse_qs
 
 from shared_auth import SharedAuth
 from shared_gateway import SharedGateway
@@ -72,7 +73,17 @@ class SharedGatewayTest(unittest.TestCase):
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
 
-    def request(self, method, path, data=None, headers=None):
+    def request(self, method, path, data=None, headers=None, csrf=True):
+        headers = dict(headers or {})
+        headers.setdefault("Host", "shared.example.test")
+        if csrf and method == "POST" and path in ("/login", "/activate", "/change-password", "/logout"):
+            _, form_headers, form = self.request("GET", path if path != "/logout" else "/", headers=headers)
+            token = re.search(r'name="_csrf" value="([A-Za-z0-9_-]{43})"', form).group(1)
+            fields = parse_qs(data or "")
+            fields["_csrf"] = [token]
+            data = urlencode(fields, doseq=True)
+            headers["Cookie"] = "; ".join(filter(None, [headers.get("Cookie", ""), form_headers["Set-Cookie"].split(";", 1)[0]]))
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
         conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
         try:
             conn.request(method, path, body=data, headers=headers or {})
@@ -119,21 +130,31 @@ class SharedGatewayTest(unittest.TestCase):
                 self.assertEqual(self.request("POST", "/logout", headers={**headers, "Cookie": cookie})[0], 303)
                 self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": cookie})[0], 401)
 
-    def test_auth_forms_reject_cross_site_and_unverified_fallback(self):
-        cases = [
-            {"Origin": "https://evil.example.test", "Referer": "https://shared.example.test/", "Host": "shared.example.test"},
-            {"Origin": "null", "Referer": "https://evil.example.test/", "Host": "shared.example.test"},
-            {"Referer": "https://evil.example.test/", "Host": "shared.example.test"},
-            {"Origin": "null", "Host": "shared.example.test"},
-            {"Host": "shared.example.test"},
-            {"Origin": "null", "Referer": "http://shared.example.test/", "Host": "shared.example.test"},
-            {"Referer": "https://shared.example.test/", "Host": "evil.example.test"},
-            {"Origin": "null", "Referer": "https://[", "Host": "shared.example.test"},
-        ]
+    def test_auth_forms_reject_cross_site_and_invalid_csrf(self):
         data = urlencode({"username": "owner", "password": "owner-private-password"})
-        for headers in cases:
-            with self.subTest(headers=headers):
-                self.assertEqual(self.request("POST", "/login", data, headers)[0], 403)
+        for headers in ({"Origin": "https://evil.example.test"}, {"Origin": "null", "Host": "evil.example.test"}):
+            self.assertEqual(self.request("POST", "/login", data, headers)[0], 403)
+        for origin in (None, "null", "https://shared.example.test"):
+            for cookie, token in (("", ""), ("a" * 43, "b" * 43), ("a" * 43, ""), ("", "a" * 43)):
+                headers = {"Cookie": "__Host-moa_csrf=" + cookie}
+                if origin is not None:
+                    headers["Origin"] = origin
+                with self.subTest(origin=origin, cookie_present=bool(cookie), token_present=bool(token)):
+                    self.assertEqual(self.request("POST", "/login", data + "&_csrf=" + token, headers, csrf=False)[0], 403)
+
+    def test_browser_form_without_origin_or_referer(self):
+        status, headers, form = self.request("GET", "/login")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+        self.assertIn("Secure; HttpOnly; SameSite=Strict", headers["Set-Cookie"])
+        token = re.search(r'name="_csrf" value="([A-Za-z0-9_-]{43})"', form).group(1)
+        data = urlencode({"username": "owner", "password": "owner-private-password", "_csrf": token})
+        status, response, _ = self.request("POST", "/login", data, {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}, csrf=False)
+        self.assertEqual(status, 303)
+        cookie = response["Set-Cookie"].split(";", 1)[0]
+        self.assertEqual(self.request("GET", "/change-password", headers={"Cookie": cookie})[0], 200)
+        self.assertEqual(self.request("POST", "/change-password", urlencode({"current_password": "owner-private-password", "new_password": "new-private-password"}), {"Cookie": cookie})[0], 303)
+        self.assertIsNotNone(self.auth.login("owner", "new-private-password"))
 
     def test_api_posts_keep_strict_origin_requirement(self):
         cookie = self.login("owner", "owner-private-password")
