@@ -159,7 +159,20 @@ class SharedGateway:
                     return self.proxy(user)
                 if path not in ("/login", "/activate", "/logout", "/change-password"):
                     return self.respond(404, "Not found")
-                if self.headers.get("Origin") != app.origin:
+                origin = self.headers.get("Origin")
+                same_origin = origin == app.origin
+                if origin in (None, "null"):
+                    try:
+                        ref = urlsplit(self.headers.get("Referer", ""))
+                        expected = urlsplit(app.origin)
+                        same_origin = (
+                            ref.scheme == expected.scheme
+                            and ref.netloc.lower() == expected.netloc.lower()
+                            and self.headers.get("Host", "").lower() == expected.netloc.lower()
+                        )
+                    except ValueError:
+                        same_origin = False
+                if not same_origin:
                     return self.respond(403, "Forbidden")
                 if path == "/logout":
                     app.auth.logout(self.token())

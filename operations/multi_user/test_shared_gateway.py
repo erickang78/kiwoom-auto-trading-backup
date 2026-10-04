@@ -106,6 +106,44 @@ class SharedGatewayTest(unittest.TestCase):
         self.assertEqual(self.request("POST", "/logout", headers={"Cookie": cookie, "Origin": "https://shared.example.test"})[0], 303)
         self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": cookie})[0], 401)
 
+    def test_auth_forms_accept_same_site_origin_fallback(self):
+        for origin in ("https://shared.example.test", None, "null"):
+            with self.subTest(origin=origin):
+                headers = {"Host": "shared.example.test", "Referer": "https://shared.example.test/", "Content-Type": "application/x-www-form-urlencoded"}
+                if origin is not None:
+                    headers["Origin"] = origin
+                status, response, _ = self.request("POST", "/login", urlencode({"username": "owner", "password": "owner-private-password"}), headers)
+                self.assertEqual(status, 303)
+                cookie = response["Set-Cookie"].split(";", 1)[0]
+                self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": cookie})[0], 200)
+                self.assertEqual(self.request("POST", "/logout", headers={**headers, "Cookie": cookie})[0], 303)
+                self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": cookie})[0], 401)
+
+    def test_auth_forms_reject_cross_site_and_unverified_fallback(self):
+        cases = [
+            {"Origin": "https://evil.example.test", "Referer": "https://shared.example.test/", "Host": "shared.example.test"},
+            {"Origin": "null", "Referer": "https://evil.example.test/", "Host": "shared.example.test"},
+            {"Referer": "https://evil.example.test/", "Host": "shared.example.test"},
+            {"Origin": "null", "Host": "shared.example.test"},
+            {"Host": "shared.example.test"},
+            {"Origin": "null", "Referer": "http://shared.example.test/", "Host": "shared.example.test"},
+            {"Referer": "https://shared.example.test/", "Host": "evil.example.test"},
+            {"Origin": "null", "Referer": "https://[", "Host": "shared.example.test"},
+        ]
+        data = urlencode({"username": "owner", "password": "owner-private-password"})
+        for headers in cases:
+            with self.subTest(headers=headers):
+                self.assertEqual(self.request("POST", "/login", data, headers)[0], 403)
+
+    def test_api_posts_keep_strict_origin_requirement(self):
+        cookie = self.login("owner", "owner-private-password")
+        for origin in (None, "null"):
+            with self.subTest(origin=origin):
+                headers = {"Cookie": cookie, "Referer": "https://shared.example.test/", "Host": "shared.example.test"}
+                if origin is not None:
+                    headers["Origin"] = origin
+                self.assertEqual(self.request("POST", "/v1/marker", "{}", headers)[0], 403)
+
     def test_password_change_requires_current_password_and_revokes_sessions(self):
         cookie = self.login("owner", "owner-private-password")
         other_cookie = self.login("owner", "owner-private-password")
