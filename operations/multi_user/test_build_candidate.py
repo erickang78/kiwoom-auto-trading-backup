@@ -27,7 +27,7 @@ class PilotBundleTest(unittest.TestCase):
         self.assertIn("/opt/kiwoom-tenants/pilot-001/secrets/dashboard-token", gateway)
         self.assertIn("'127.0.0.1',8888", gateway)
         self.assertIn("TenantAuth", gateway)
-        self.assertIn("if not self.authed(): return self.respond(401", gateway)
+        self.assertIn("if not authenticated and not public_health: return self.respond(401", gateway)
         self.assertTrue((self.output / "root/tenant_auth.py").is_file())
         self.assertTrue((self.output / "root/invite_user.py").is_file())
         for unit in (self.output / "config/systemd").glob("*.service"):

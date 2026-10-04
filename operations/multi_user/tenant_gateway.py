@@ -1,5 +1,5 @@
 """Isolated tenant dashboard gateway with invitation-only account activation."""
-import http.client, json, re, threading, time
+import http.client, json, re, sys, threading, time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -8,6 +8,7 @@ from tenant_auth import TenantAuth
 ROOT = Path('/opt/kiwoom/dashboard-source/dist')
 KEY = Path('/opt/kiwoom/secrets/dashboard-token').read_text().strip()
 AUTH = TenantAuth(Path('/opt/kiwoom'))
+BACKUP_TOOLS = Path('/opt/kiwoom/backup-tools')
 ORIGIN = 'https://example.invalid'
 OLD_ORIGIN = 'https://moa-invest-sep22.erickang78.chatgpt.site'
 TTL = 7*24*3600
@@ -44,15 +45,17 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(size)
     def authed(self):
         return valid(self.headers.get('Cookie',''))
-    def proxy(self):
+    def proxy(self, public_health=False):
         try:
-            if not self.authed(): return self.respond(401,json.dumps({'error':'login_required'}),'application/json')
+            authenticated=self.authed()
+            if not authenticated and not public_health: return self.respond(401,json.dumps({'error':'login_required'}),'application/json')
             body=self.body() if self.command=='POST' else None
             headers={k:self.headers[k] for k in ('Content-Type','Access-Control-Request-Headers','Access-Control-Request-Method') if self.headers.get(k)}
             if self.command=='POST' and self.headers.get('Origin')!=ORIGIN:
                 return self.respond(403,'Forbidden')
-            headers['Authorization']='Bearer '+KEY
-            headers['Origin']=OLD_ORIGIN
+            if authenticated:
+                headers['Authorization']='Bearer '+KEY
+                headers['Origin']=OLD_ORIGIN
             conn=http.client.HTTPConnection('127.0.0.1',8787,timeout=90)
             try:
                 conn.request(self.command,self.path,body=body,headers=headers)
@@ -70,7 +73,14 @@ class Handler(BaseHTTPRequestHandler):
         self.respond(404,'Not found')
     def do_GET(self):
         path=urlsplit(self.path).path
-        if path.startswith('/v1/') or path=='/health': return self.proxy()
+        if path=='/v1/backup/status':
+            if not self.authed(): return self.respond(401,json.dumps({'error':'unauthorized'}),'application/json')
+            if not (BACKUP_TOOLS/'backup_status.py').is_file(): return self.respond(404,'Not found')
+            if str(BACKUP_TOOLS) not in sys.path: sys.path.insert(0,str(BACKUP_TOOLS))
+            from backup_status import read_status
+            return self.respond(200,json.dumps(read_status()),'application/json')
+        if path=='/health': return self.proxy(public_health=True)
+        if path.startswith('/v1/'): return self.proxy()
         if path == '/activate': return self.respond(200,ACTIVATE)
         if path not in ('/','/index.html','/stock-list.js'):
             return self.respond(404,'Not found')
@@ -81,6 +91,9 @@ class Handler(BaseHTTPRequestHandler):
             # The bearer stays on the server, never in the AWS HTML.
             content,n=re.subn(r"(\bTOKEN\s*=\s*)['\"][^'\"]*['\"]",r"\1''",content)
             if n!=1 or KEY in content: return self.respond(500,'Dashboard configuration error')
+            backup_script=BACKUP_TOOLS/'dashboard-status.js'
+            if backup_script.is_file():
+                content=content.replace('</body>','<script>'+backup_script.read_text()+'</script></body>')
             content=content.replace('</body>','<form action="/logout" method="post" style="text-align:center;padding:20px"><button type="submit">로그아웃</button></form></body>')
         self.respond(200,content,'text/javascript; charset=utf-8' if filename.endswith('.js') else 'text/html; charset=utf-8')
     def do_POST(self):

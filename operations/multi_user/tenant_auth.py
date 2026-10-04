@@ -49,6 +49,20 @@ class TenantAuth:
             db.execute("INSERT OR REPLACE INTO invitation(id,token_hash,expires_at) VALUES(1,?,?)", (token_hash, int(time.time()) + lifetime_seconds))
         return token
 
+    def bootstrap_existing_key(self, key_path: Path):
+        """Migrate the owner's existing login key without printing or copying it."""
+        password = Path(key_path).read_text().strip()
+        if not password or len(password) > 1024:
+            raise ValueError("existing login key is empty or too long")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT password_hash FROM account WHERE id=1").fetchone()
+            if not row or row[0]:
+                raise ValueError("account already activated")
+            salt = secrets.token_bytes(16)
+            db.execute("UPDATE account SET salt=?,password_hash=?,session_epoch=session_epoch+1 WHERE id=1", (salt.hex(), digest(password, salt)))
+            db.execute("DELETE FROM invitation WHERE id=1")
+
     def activate(self, token: str, password: str):
         if len(password) < 12 or len(password) > 1024:
             return False

@@ -41,6 +41,15 @@ class TenantAuthTest(unittest.TestCase):
         self.assertTrue(self.auth.activate(token, "long-enough-password"))
         self.assertFalse(other.valid_session(self.auth.new_session()))
 
+    def test_existing_owner_key_migrates_without_changing_login_secret(self):
+        key = Path(self.temp.name) / "secrets/dashboard-token"
+        key.write_text("existing-private-dashboard-key\n")
+        self.auth.bootstrap_existing_key(key)
+        self.assertTrue(self.auth.verify_password("existing-private-dashboard-key"))
+        self.assertFalse(self.auth.verify_password("different-key"))
+        with self.assertRaises(ValueError):
+            self.auth.bootstrap_existing_key(key)
+
 
 if __name__ == "__main__":
     unittest.main()
