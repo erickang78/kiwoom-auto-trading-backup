@@ -1,0 +1,19 @@
+[Unit]
+Description=Encrypted read-only trading database backup to private S3
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 /opt/kiwoom/backup-tools/backup.py --config /opt/kiwoom/secrets/db-backup-config.json
+TimeoutStartSec=10min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/kiwoom/state /opt/kiwoom/secrets /opt/kiwoom/backup-tools
+ReadWritePaths=/opt/kiwoom/backup-status
+RuntimeDirectory=kiwoom-db-backup
+RuntimeDirectoryMode=0700
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
