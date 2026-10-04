@@ -1,5 +1,5 @@
 """Isolated tenant dashboard gateway with invitation-only account activation."""
-import http.client, json, re, sys, threading, time
+import http.client, json, re, threading, time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -9,6 +9,7 @@ ROOT = Path('/opt/kiwoom/dashboard-source/dist')
 KEY = Path('/opt/kiwoom/secrets/dashboard-token').read_text().strip()
 AUTH = TenantAuth(Path('/opt/kiwoom'))
 BACKUP_TOOLS = Path('/opt/kiwoom/backup-tools')
+BACKUP_STATUS = Path('/opt/kiwoom/backup_status.py')
 ORIGIN = 'https://example.invalid'
 OLD_ORIGIN = 'https://moa-invest-sep22.erickang78.chatgpt.site'
 TTL = 7*24*3600
@@ -75,8 +76,7 @@ class Handler(BaseHTTPRequestHandler):
         path=urlsplit(self.path).path
         if path=='/v1/backup/status':
             if not self.authed(): return self.respond(401,json.dumps({'error':'unauthorized'}),'application/json')
-            if not (BACKUP_TOOLS/'backup_status.py').is_file(): return self.respond(404,'Not found')
-            if str(BACKUP_TOOLS) not in sys.path: sys.path.insert(0,str(BACKUP_TOOLS))
+            if not BACKUP_STATUS.is_file(): return self.respond(404,'Not found')
             from backup_status import read_status
             return self.respond(200,json.dumps(read_status()),'application/json')
         if path=='/health': return self.proxy(public_health=True)

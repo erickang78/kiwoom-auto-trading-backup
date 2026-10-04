@@ -1,4 +1,5 @@
 import http.client
+import sys
 import threading
 import tempfile
 import unittest
@@ -23,7 +24,10 @@ class TenantGatewayTest(unittest.TestCase):
         backup = root / "backup-tools"
         backup.mkdir()
         (backup / "dashboard-status.js").write_text("window.backupStatus=true;")
-        (backup / "backup_status.py").write_text("def read_status(): return {'ok': True}\n")
+        (root / "backup_status.py").write_text("def read_status(): return {'ok': True}\n")
+        sys.path.insert(0, str(root))
+        self.addCleanup(lambda: sys.path.remove(str(root)))
+        self.addCleanup(lambda: sys.modules.pop("backup_status", None))
         auth = TenantAuth(root)
         auth.initialize()
         auth.bootstrap_existing_key(secrets_dir / "dashboard-token")
