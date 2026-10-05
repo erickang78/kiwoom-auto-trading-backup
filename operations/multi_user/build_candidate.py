@@ -32,13 +32,42 @@ SERVICES = (
 
 def transform(text: str, *, tenant_root: str, origin: str, api_port: int, gateway_port: int) -> str:
     return (
-        text.replace(SOURCE_ROOT + "/", tenant_root + "/")
-        .replace("Path('" + SOURCE_ROOT + "')", "Path('" + tenant_root + "')")
+        re.sub(r"/opt/kiwoom(?=/|\s|$)", tenant_root, text)
         .replace(OLD_ORIGIN, origin)
         .replace(SOURCE_ORIGIN, origin)
         .replace("8787", str(api_port))
         .replace("8788", str(gateway_port))
     )
+
+
+def make_read_only_pilot_api(text: str) -> str:
+    """Allow only local status/performance reads in the pilot API."""
+    marker = "        if not is_price and not is_trade:\n"
+    guard = '''        # Pilot API is read-only until a separately reviewed activation.
+        if mode or is_flow or is_coin or is_trade or is_kakao or is_news or is_strategy or is_quote_domestic or is_quote_us_search or is_quote_us or is_chart_domestic or is_chart_us:
+            return self._json(403, {'error': 'pilot_read_only'})
+        if is_auto_trading and body.get('action', 'status') not in ('status', 'performance'):
+            return self._json(403, {'error': 'pilot_read_only'})
+        if is_trading_control and body.get('action', 'status') != 'status':
+            return self._json(403, {'error': 'pilot_read_only'})
+        if is_signal_validation and body.get('action', 'status') != 'status':
+            return self._json(403, {'error': 'pilot_read_only'})
+'''
+    if text.count(marker) != 1:
+        raise ValueError("refresh API route structure changed; review read-only guard")
+    return text.replace(marker, guard + marker, 1)
+
+
+def make_tenant_gateway_read_only(text: str) -> str:
+    """Disable tenant account/secret writes until owner-reviewed provisioning."""
+    marker = "    def do_POST(self):\n"
+    gate = '''    def do_POST(self):
+        self.respond(403, {'error': 'pilot_read_only'})
+        return
+'''
+    if text.count(marker) != 1:
+        raise ValueError("tenant gateway route structure changed; review read-only gate")
+    return text.replace(marker, gate, 1)
 
 
 def generic_dashboard(text: str) -> str:
@@ -84,10 +113,14 @@ def build(source: Path, output: Path, tenant_id: str, origin: str, api_port: int
             if path.name.startswith("test_") or path.name.startswith("patch_") or "diagnostic" in path.name:
                 continue
             content = transform(path.read_text(), tenant_root=tenant_root, origin=origin, api_port=api_port, gateway_port=gateway_port)
+            if path.name == "refresh_api.py":
+                content = make_read_only_pilot_api(content)
             ast.parse(content, filename=path.name)
             (candidate / "current" / path.name).write_text(content)
         gateway = Path(__file__).with_name("tenant_gateway.py")
         gateway_text = transform(gateway.read_text(), tenant_root=tenant_root, origin=origin, api_port=api_port, gateway_port=gateway_port)
+        gateway_text = re.sub(r"/opt/kiwoom(?=/|['\"])", tenant_root, gateway_text)
+        gateway_text = make_tenant_gateway_read_only(gateway_text)
         ast.parse(gateway_text, filename=gateway.name)
         (candidate / "root/dashboard_gateway.py").write_text(gateway_text)
         for support in ("tenant_auth.py", "invite_user.py"):
@@ -114,6 +147,11 @@ def build(source: Path, output: Path, tenant_id: str, origin: str, api_port: int
                 content = content.replace("[Service]\n", f"[Service]\nUser=kiwoom-{tenant_id}\n", 1)
             if "\nUMask=" not in content:
                 content = content.replace("[Service]\n", "[Service]\nUMask=0077\n", 1)
+            content = content.replace(tenant_root + "/.venv/bin/python", "/usr/bin/python3")
+            if name != "moa-dashboard":
+                content = content.replace("[Service]\n", "[Service]\nEnvironment=PYTHONPATH=" + tenant_root + "/current\n", 1)
+            if name == "kiwoom-refresh":
+                content = content.replace("[Service]\n", "[Service]\nMemoryHigh=96M\nMemoryMax=128M\nCPUQuota=20%\nTasksMax=32\n", 1)
             (candidate / "config/systemd" / f"{name}@{tenant_id}.service").write_text(content)
         # The existing refresh service has a drop-in allowing state writes.
         # Fold that permission into this standalone pilot unit.
