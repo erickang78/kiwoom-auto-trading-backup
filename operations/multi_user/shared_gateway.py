@@ -266,7 +266,20 @@ class SharedGateway:
                             content = content.replace("</body>", "<script>" + Path(script).read_text() + "</script></body>")
                         profile_script = "<script>(()=>{const img=document.querySelector('img.ericgolf-logo, .logo img');if(!img)return;img.style.cursor='pointer';img.title='회원정보 수정';img.tabIndex=0;img.setAttribute('role','link');img.setAttribute('aria-label','회원정보 수정');img.onclick=()=>location.assign('/account');img.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();location.assign('/account')}};" + ("img.src='/account/photo';" if self.photo_file(user).is_file() else "") + "})();</script>"
                         content = content.replace("</body>", profile_script + "</body>")
-                        content = content.replace("</body>", '<div style="text-align:center;padding:20px"><a href="/account">회원정보 수정</a> · <a href="/account#password">비밀번호 변경</a><form action="/logout" method="post"><button type="submit">로그아웃</button></form></div></body>')
+                        footer = '''<style>
+.gateway-footer{width:min(calc(100% - 32px),760px);margin:18px auto 34px;padding:14px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:start;gap:10px;border:1px solid #dce8e5;border-radius:18px;background:#fff;box-shadow:0 12px 35px #18304712;color:#526a76;font:13px/1.4 system-ui,-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+.gateway-footer>a,.gateway-footer>form>button{min-width:0;min-height:46px;display:flex;align-items:center;justify-content:center;padding:10px 12px;border:1px solid #d5e2de;border-radius:11px;background:#f8fbfa;color:#315a59;font:inherit;font-weight:700;text-align:center;text-decoration:none;cursor:pointer;transition:background .15s,border-color .15s,transform .15s}
+.gateway-footer>a:hover,.gateway-footer>form>button:hover{border-color:#8fc2b3;background:#eff8f4;transform:translateY(-1px)}
+.gateway-footer>a:focus-visible,.gateway-footer>form>button:focus-visible{outline:3px solid #8fc2b388;outline-offset:2px}
+.gateway-footer>form{display:contents}
+.gateway-footer>form>span{display:flex;min-width:0;width:100%;flex-direction:column;align-items:stretch!important;margin:0!important;vertical-align:initial!important}
+.gateway-footer #trading-control{width:100%!important;min-height:46px;margin:0!important;padding:10px 12px!important;border-radius:11px!important;font:inherit!important;font-weight:700!important}
+.gateway-footer #trading-control-scope{max-width:none!important;margin:6px 2px 0!important;font-size:10px!important;line-height:1.45!important;text-align:center!important}
+.gateway-footer>form>div[role=status]{grid-column:1/-1;margin:2px 4px 0!important;text-align:center}
+.gateway-footer .creator-credit{grid-column:1/-1;text-align:center}
+@media(max-width:620px){.gateway-footer{width:calc(100% - 28px);margin:14px auto 26px;padding:12px;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;border-radius:16px}.gateway-footer>a,.gateway-footer>form>button,.gateway-footer #trading-control{min-height:44px;padding:9px 7px!important;font-size:13px!important}.gateway-footer #trading-control-scope{font-size:9px!important}}
+</style><div class="gateway-footer"><a href="/account">회원정보 수정</a><a href="/account#password">비밀번호 변경</a><form action="/logout" method="post"><button type="submit">로그아웃</button></form></div>'''
+                        content = content.replace("</body>", footer + "</body>")
                     self.respond(200, content, "text/javascript; charset=utf-8" if filename.endswith(".js") else "text/html; charset=utf-8")
                 except OSError:
                     self.respond(503, "Tenant dashboard unavailable")
