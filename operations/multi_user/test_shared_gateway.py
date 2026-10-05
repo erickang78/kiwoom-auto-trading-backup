@@ -19,6 +19,7 @@ from tenant_auth import digest
 class FakeBackend(BaseHTTPRequestHandler):
     marker = ""
     expected_token = ""
+    token_path = None
 
     def log_message(self, *_):
         pass
@@ -30,7 +31,8 @@ class FakeBackend(BaseHTTPRequestHandler):
         self.answer()
 
     def answer(self):
-        if self.headers.get("Authorization") != "Bearer " + self.expected_token:
+        expected = self.token_path.read_text().strip() if self.token_path else self.expected_token
+        if self.headers.get("Authorization") != "Bearer " + expected:
             self.send_error(401)
             return
         body = json.dumps({"marker": self.marker}).encode()
@@ -54,7 +56,7 @@ class SharedGatewayTest(unittest.TestCase):
             (static / "stock-list.js").write_text("const stocks=[]")
             token_file = root / (marker + ".token")
             token_file.write_text(marker + "-backend-key")
-            handler = type(marker.title() + "Backend", (FakeBackend,), {"marker": marker, "expected_token": marker + "-backend-key"})
+            handler = type(marker.title() + "Backend", (FakeBackend,), {"marker": marker, "expected_token": marker + "-backend-key", "token_path": token_file})
             backend = ThreadingHTTPServer(("127.0.0.1", 0), handler)
             threading.Thread(target=backend.serve_forever, daemon=True).start()
             self.addCleanup(backend.server_close)
@@ -259,6 +261,14 @@ class SharedGatewayTest(unittest.TestCase):
         self.assertEqual(owner_token.read_text().strip(), "a-new-long-private-api-key-123")
         self.assertEqual(owner_token.stat().st_mode & 0o777, 0o600)
         self.assertEqual(pilot_token.read_text(), "pilot-backend-key")
+        for cookie, marker in ((owner, "owner"), (pilot, "pilot")):
+            status, _, body = self.request("GET", "/v1/marker", headers={"Cookie": cookie})
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["marker"], marker)
+        for invalid in ("x" * 23, "x" * 257, "a" * 24 + " ", "x" * 24 + "\n", "é" * 24):
+            fields = urlencode({"new_key": invalid, "password": "owner-private-password"})
+            self.assertNotEqual(self.request("POST", "/account/api-key", fields, {"Cookie": owner})[0], 303)
+        self.assertEqual(owner_token.read_text().strip(), "a-new-long-private-api-key-123")
         self.assertNotIn("a-new-long-private-api-key-123", self.request("GET", "/account", headers={"Cookie": owner})[2])
         self.assertEqual(self.request("GET", "/account", headers={"Cookie": pilot})[0], 200)
 
@@ -272,6 +282,13 @@ class SharedGatewayTest(unittest.TestCase):
                 (root / "config.json").write_text(json.dumps(changed))
                 with self.assertRaises(ValueError):
                     SharedGateway(root)
+
+    def test_tenant_token_files_cannot_overlap(self):
+        changed = json.loads(json.dumps(self.app.config))
+        changed["tenants"]["pilot-001"]["backend_token_file"] = changed["tenants"]["owner"]["backend_token_file"]
+        (self.app.root / "config.json").write_text(json.dumps(changed))
+        with self.assertRaises(ValueError):
+            SharedGateway(self.app.root)
 
     def test_profile_photo_is_tenant_scoped_and_validated(self):
         owner = self.login("owner", "owner-private-password")

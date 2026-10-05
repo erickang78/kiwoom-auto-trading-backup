@@ -46,6 +46,9 @@ class SharedGateway:
             for key in ("real_credentials_file", "upbit_credentials_file"):
                 if tenant.get(key) and not Path(tenant[key]).is_absolute():
                     raise ValueError("tenant credential paths must be absolute")
+        token_paths = [Path(t["backend_token_file"]).resolve() for t in self.tenants.values()]
+        if len(token_paths) != len(set(token_paths)) or (self.root / "secrets/users.sqlite3").resolve() in token_paths:
+            raise ValueError("tenant token files overlap another tenant or auth database")
         credential_paths = []
         protected = {(self.root / "secrets/users.sqlite3").resolve()}
         protected.update(Path(t["backend_token_file"]).resolve() for t in self.tenants.values())
@@ -53,7 +56,7 @@ class SharedGateway:
             for key in ("real_credentials_file", "upbit_credentials_file"):
                 if tenant.get(key):
                     path = Path(tenant[key])
-                    if path.resolve() in protected or path.resolve() in credential_paths or path.parent.is_symlink():
+                    if path.resolve() in protected or path.resolve() in credential_paths or path.parent.resolve() != path.parent:
                         raise ValueError("credential path overlaps protected or another tenant file")
                     credential_paths.append(path.resolve())
             if tenant.get("auto_trading_state_file") and not Path(tenant["auto_trading_state_file"]).is_absolute():
@@ -297,7 +300,8 @@ class SharedGateway:
                         return self.respond(303, extra={"Location": "/login", "Set-Cookie": "moa_shared_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict"})
                     if path == "/account/api-key":
                         try:
-                            rotate_api_key(Path((app.tenant_for(user) or {})["backend_token_file"]), data.get("new_key", [""])[0])
+                            with app.lock:
+                                rotate_api_key(Path((app.tenant_for(user) or {})["backend_token_file"]), data.get("new_key", [""])[0])
                         except (KeyError, OSError, ValueError):
                             return self.account(user, "API key를 변경하지 못했습니다. 24자 이상 공백 없는 값을 입력해 주세요.")
                         return self.respond(303, extra={"Location": "/account"})

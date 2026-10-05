@@ -43,7 +43,7 @@ def save_credentials(path: Path, kind: str, key: str, secret: str) -> None:
     path = Path(path)
     if not path.is_absolute() or not path.parent.is_dir() or path.is_symlink():
         raise ValueError("invalid credential path")
-    if kind not in ("kiwoom-real", "upbit") or path.parent.is_symlink():
+    if kind not in ("kiwoom-real", "upbit") or path.parent.resolve() != path.parent:
         raise ValueError("invalid credential type or parent")
     payload = json.loads(path.read_text()) if path.exists() else {}
     if not isinstance(payload, dict):
@@ -65,11 +65,13 @@ def rotate_api_key(path: Path, new_key: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]{24,256}", new_key):
         raise ValueError("invalid API key")
     path = Path(path)
-    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.parent.is_symlink():
+    if not path.is_absolute() or not path.is_file() or path.is_symlink() or path.parent.resolve() != path.parent:
         raise ValueError("invalid API key path")
+    previous = path.stat()
     temporary = path.with_name("." + path.name + "." + secrets.token_hex(8))
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
+        os.fchown(fd, previous.st_uid, previous.st_gid)
         with os.fdopen(fd, "w") as handle:
             handle.write(new_key + "\n")
             handle.flush()
