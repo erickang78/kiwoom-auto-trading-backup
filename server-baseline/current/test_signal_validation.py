@@ -105,12 +105,12 @@ class ValidationTest(unittest.TestCase):
             ss = copy.deepcopy(state)
             self.assertFalse(s.step(ss, dict(scan(), date=date), quotes(volume='101'), NOW + dt.timedelta(minutes=1)))
 
-    def test_cheap_stock_still_one_share(self):
+    def test_mid_price_stock_buys_two_shares_by_krw_value(self):
         state = s.initial(NOW)
         s.step(state, scan(), quotes(price='25', fx='1000'), NOW)
         s.step(state, scan(), quotes(price='25', fx='1000', volume='101'), NOW + dt.timedelta(minutes=1))
-        self.assertEqual(state['positions']['ND:S0']['quantity'], 1)
-        self.assertEqual(state['positions']['ND:S0']['cost_krw'], 25000)
+        self.assertEqual(state['positions']['ND:S0']['quantity'], 2)
+        self.assertEqual(state['positions']['ND:S0']['cost_krw'], 50000)
 
     def test_db_persistence_pause_and_read_only_calls(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(s.time, 'sleep'):
