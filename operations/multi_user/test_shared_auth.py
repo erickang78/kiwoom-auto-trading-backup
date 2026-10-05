@@ -8,6 +8,14 @@ from tenant_auth import TenantAuth
 
 
 class SharedAuthTest(unittest.TestCase):
+    def test_one_tenant_cannot_be_reserved_for_two_users(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = SharedAuth(Path(directory) / "users.sqlite3")
+            auth.initialize()
+            auth.add_user("pilot", "pilot-001")
+            with self.assertRaises(ValueError):
+                auth.add_user("another", "pilot-001")
+
     def test_new_password_minimum_is_ten_characters(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = SharedAuth(Path(directory) / "users.sqlite3")

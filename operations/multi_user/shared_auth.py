@@ -40,6 +40,9 @@ class SharedAuth:
         if not re.fullmatch(r"[a-z][a-z0-9-]{2,30}", tenant_id):
             raise ValueError("invalid tenant ID")
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM users WHERE tenant_id=?", (tenant_id,)).fetchone():
+                raise ValueError("tenant already assigned")
             db.execute("INSERT INTO users(username,tenant_id,salt,password_hash,enabled) VALUES(?,?,?,?,?)", (username, tenant_id, salt, password_hash, int(bool(password_hash))))
 
     def invite(self, username: str, lifetime_seconds=86400):
@@ -54,17 +57,20 @@ class SharedAuth:
         return token
 
     def activate(self, username: str, token: str, password: str):
-        if not 10 <= len(password) <= 1024:
+        if not re.fullmatch(r"[a-z][a-z0-9-]{2,30}", username) or not 10 <= len(password) <= 1024 or len(token) > 256:
             return False
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT u.enabled,i.token_hash,i.expires_at FROM users u LEFT JOIN invitations i USING(username) WHERE u.username=?", (username,)).fetchone()
-            if not row or row[0] or not row[1] or row[2] < time.time() or not hmac.compare_digest(token_hash, row[1]):
+            row = db.execute("SELECT u.username,u.enabled,i.expires_at FROM invitations i JOIN users u ON u.username=i.username WHERE i.token_hash=?", (token_hash,)).fetchone()
+            if not row or row[1] or row[2] < time.time():
+                return False
+            reserved_username = row[0]
+            if username != reserved_username and db.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
                 return False
             salt = secrets.token_bytes(16)
-            db.execute("UPDATE users SET salt=?,password_hash=?,enabled=1 WHERE username=?", (salt.hex(), digest(password, salt), username))
-            db.execute("DELETE FROM invitations WHERE username=?", (username,))
+            db.execute("DELETE FROM invitations WHERE username=?", (reserved_username,))
+            db.execute("UPDATE users SET username=?,salt=?,password_hash=?,enabled=1 WHERE username=?", (username, salt.hex(), digest(password, salt), reserved_username))
         return True
 
     def login(self, username: str, password: str, ttl=7 * 86400):

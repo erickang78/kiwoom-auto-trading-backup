@@ -178,19 +178,24 @@ class SharedGatewayTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn('name="confirm_password"', signup_page)
         self.assertIn('minlength="10"', signup_page)
+        self.assertIn('사용할 ID', signup_page)
+        self.assertNotIn('초대받은 ID', signup_page)
         self.assertEqual(self.request("POST", "/signup", urlencode({"username": "stranger", "invite": "invalid", "password": "abcdefghij", "confirm_password": "abcdefghij"}))[0], 401)
         invite = self.auth.invite("candidate")
-        fields = {"username": "candidate", "invite": invite, "password": "abcdefghij", "confirm_password": "different"}
+        fields = {"username": "newmember", "invite": invite, "password": "abcdefghij", "confirm_password": "different"}
         self.assertEqual(self.request("POST", "/signup", urlencode(fields))[0], 400)
-        self.assertIsNone(self.auth.login("candidate", "abcdefghij"))
+        self.assertIsNone(self.auth.login("newmember", "abcdefghij"))
         fields["confirm_password"] = "abcdefghij"
+        self.assertEqual(self.request("POST", "/signup", urlencode({**fields, "username": "owner"}))[0], 401)
+        self.assertEqual(self.request("POST", "/signup", urlencode({**fields, "username": "Bad-ID"}))[0], 401)
         self.assertEqual(self.request("POST", "/signup", urlencode(fields), csrf=False)[0], 403)
         status, headers, _ = self.request("POST", "/signup", urlencode(fields))
         self.assertEqual(status, 303)
         self.assertEqual(headers["Location"], "/login?registered=1")
         self.assertEqual(self.request("POST", "/signup", urlencode(fields))[0], 401)
         self.assertIn("회원가입이 완료", self.request("GET", "/login?registered=1")[2])
-        cookie = self.login("candidate", "abcdefghij")
+        self.assertIsNone(self.auth.login("candidate", "abcdefghij"))
+        cookie = self.login("newmember", "abcdefghij")
         self.assertEqual(json.loads(self.request("GET", "/v1/marker", headers={"Cookie": cookie})[2])["marker"], "candidate")
 
     def test_api_posts_keep_strict_origin_requirement(self):

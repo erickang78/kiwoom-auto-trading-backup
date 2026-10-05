@@ -22,7 +22,7 @@ from account_settings import account_page, image_type, save_credentials, trading
 
 STYLE = '<style>body{font-family:system-ui;background:#f2f5f8;color:#142236;margin:0;display:grid;place-items:center;min-height:100vh}main{box-sizing:border-box;background:white;border-radius:20px;padding:30px;width:min(92vw,420px)}label{display:block;margin:18px 0 7px}input,button{box-sizing:border-box;width:100%;padding:13px;font:inherit;border-radius:10px}input{border:1px solid #cdd8e3}button{margin-top:17px;border:0;background:#147a67;color:white;font-weight:700}p{color:#66758a}</style>'
 LOGIN = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>키움 자동매매 · 로그인</title>'+STYLE+'<main><h1>키움 자동매매</h1><form method="post" action="/login"><label for="username">사용자 이름</label><input id="username" name="username" required autocomplete="username"><label for="password">비밀번호</label><input id="password" name="password" type="password" required autocomplete="current-password"><button>로그인</button></form><p><a href="/signup">초대받아 회원가입하기</a></p></main></html>'
-SIGNUP = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>키움 자동매매 · 회원가입</title>'+STYLE+'<main><h1>회원가입</h1><p>관리자에게 받은 ID와 초대 코드로 계정을 활성화합니다.</p><form method="post" action="/signup"><label for="username">초대받은 ID</label><input id="username" name="username" required autocomplete="username"><label for="invite">초대 코드</label><input id="invite" name="invite" required autocomplete="off"><label for="password">비밀번호 (10자 이상)</label><input id="password" name="password" type="password" minlength="10" required autocomplete="new-password"><label for="confirm_password">비밀번호 확인</label><input id="confirm_password" name="confirm_password" type="password" minlength="10" required autocomplete="new-password"><button>회원가입</button></form><p><a href="/login">로그인으로 돌아가기</a></p></main></html>'
+SIGNUP = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>키움 자동매매 · 회원가입</title>'+STYLE+'<main><h1>회원가입</h1><p>관리자에게 받은 초대 코드로 가입하고 로그인 ID를 직접 정합니다.</p><form method="post" action="/signup"><label for="invite">초대 코드</label><input id="invite" name="invite" required autocomplete="off"><label for="username">사용할 ID</label><input id="username" name="username" pattern="[a-z][a-z0-9-]{2,30}" minlength="3" maxlength="31" required autocomplete="username"><p>영문 소문자로 시작하는 3~31자의 영문 소문자·숫자·-</p><label for="password">비밀번호 (10자 이상)</label><input id="password" name="password" type="password" minlength="10" required autocomplete="new-password"><label for="confirm_password">비밀번호 확인</label><input id="confirm_password" name="confirm_password" type="password" minlength="10" required autocomplete="new-password"><button>회원가입</button></form><p><a href="/login">로그인으로 돌아가기</a></p></main></html>'
 
 
 class SharedGateway:
@@ -335,7 +335,7 @@ class SharedGateway:
                 with app.lock:
                     now = time.time()
                     app.failures = {k: v for k, v in app.failures.items() if now - v[0] < 300}
-                    key = (username, self.client_address[0])
+                    key = ("signup" if path in ("/signup", "/activate") else username, self.client_address[0])
                     if app.failures.get(key, (0, 0))[1] >= 10:
                         return self.respond(429, "잠시 후 다시 시도해 주세요.")
                 if path in ("/signup", "/activate"):
