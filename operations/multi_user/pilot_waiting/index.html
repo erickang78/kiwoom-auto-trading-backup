@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d2136">
+  <title>계정 준비 중 · 키움 자동매매</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; color: #183047; background: radial-gradient(circle at 85% 8%, #d3e9e2 0, transparent 31%), linear-gradient(145deg, #eef5f1 0%, #f6f8f7 48%, #eaf0f4 100%); }
+    .shell { width: min(100% - 32px, 760px); margin: 0 auto; padding: 32px 0 18px; }
+    .brand { display: flex; align-items: center; gap: 10px; color: #203e49; font-size: 15px; font-weight: 800; letter-spacing: -.03em; }
+    .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; color: #fff; background: #0c7868; box-shadow: 0 6px 14px #0c78682b; font-size: 19px; }
+    .card { overflow: hidden; margin-top: 30px; border: 1px solid #dce9e4; border-radius: 26px; background: #fff; box-shadow: 0 22px 65px #174d3c14; }
+    .hero { padding: 35px 38px 32px; color: #fff; background: radial-gradient(circle at 100% 0, #2f8e81 0, transparent 38%), linear-gradient(135deg, #0d2639, #135450); }
+    .hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+    .avatar { position: relative; display: grid; place-items: center; flex: none; width: 70px; height: 70px; border: 2px solid #ffffff6b; border-radius: 20px; background: #ffffff28; font-size: 30px; overflow: hidden; }
+    .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; cursor: pointer; }
+    .status { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border: 1px solid #a1e6d07a; border-radius: 999px; color: #d8fff0; background: #ffffff19; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #83e8bf; box-shadow: 0 0 0 4px #83e8bf30; }
+    h1 { margin: 27px 0 12px; font-size: clamp(29px, 5vw, 39px); line-height: 1.2; letter-spacing: -.06em; }
+    .lead { max-width: 540px; margin: 0; color: #d4e9e6; font-size: 15px; line-height: 1.75; word-break: keep-all; }
+    .content { padding: 30px 38px 34px; }
+    .eyebrow { margin: 0 0 17px; color: #50716e; font-size: 12px; font-weight: 800; letter-spacing: .1em; }
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .step { min-height: 143px; padding: 18px; border: 1px solid #e3ece9; border-radius: 18px; background: #fafcfb; }
+    .step.complete { border-color: #cbe9db; background: #f1faf5; }
+    .step-number { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 9px; color: #52726b; background: #e9f0ed; font-size: 13px; font-weight: 800; }
+    .complete .step-number { color: #fff; background: #138068; }
+    .step strong { display: block; margin: 18px 0 5px; font-size: 15px; letter-spacing: -.03em; }
+    .step p { margin: 0; color: #71818b; font-size: 12px; line-height: 1.55; word-break: keep-all; }
+    .note { display: flex; gap: 11px; margin-top: 22px; padding: 17px 18px; border-radius: 15px; color: #355b68; background: #edf4f6; font-size: 13px; line-height: 1.6; word-break: keep-all; }
+    .note-icon { flex: none; font-size: 17px; }
+    body > div:last-of-type { width: min(100% - 32px, 760px); margin: 0 auto 35px !important; padding: 0 38px 22px !important; color: #647986; font-size: 13px; }
+    body > div:last-of-type a { display: inline-block; margin: 0 4px; color: #0e7467; font-weight: 700; text-decoration: none; }
+    body > div:last-of-type a:hover { text-decoration: underline; }
+    body > div:last-of-type form { display: inline-block; margin-left: 8px; }
+    body > div:last-of-type button { padding: 7px 11px; border: 1px solid #cbdcd8; border-radius: 8px; color: #4d6472; background: #fff; font: inherit; cursor: pointer; }
+    @media (max-width: 620px) { .shell { padding-top: 19px; } .card { margin-top: 20px; border-radius: 21px; } .hero { padding: 26px 24px 28px; } .content { padding: 26px 24px 28px; } .steps { grid-template-columns: 1fr; } .step { min-height: 0; } .step strong { margin-top: 12px; } body > div:last-of-type { padding: 0 10px 24px !important; line-height: 2.7; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">↗</span>키움 자동매매</div>
+    <section class="card" aria-labelledby="page-title">
+      <div class="hero">
+        <div class="hero-top">
+          <div class="avatar"><span aria-hidden="true">👤</span><img class="ericgolf-logo" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="프로필 사진" title="회원정보 수정"></div>
+          <span class="status">가입 완료</span>
+        </div>
+        <h1 id="page-title">계정을 준비하고 있어요</h1>
+        <p class="lead">회원가입과 로그인이 완료됐습니다. 계좌 연결과 매매 기능은 아직 준비 중이며, 준비가 끝나기 전에는 주문이 실행되지 않습니다.</p>
+      </div>
+      <div class="content">
+        <p class="eyebrow">이용 준비 상태</p>
+        <div class="steps" aria-label="이용 준비 단계">
+          <div class="step complete"><span class="step-number" aria-hidden="true">✓</span><strong>회원가입 완료</strong><p>나만의 로그인 계정이 만들어졌어요.</p></div>
+          <div class="step"><span class="step-number" aria-hidden="true">2</span><strong>계좌 연결 대기</strong><p>키움 계좌와 인증정보는 아직 연결되지 않았어요.</p></div>
+          <div class="step"><span class="step-number" aria-hidden="true">3</span><strong>매매 기능 대기</strong><p>검증이 끝난 뒤 이용할 수 있어요.</p></div>
+        </div>
+        <div class="note"><span class="note-icon" aria-hidden="true">✦</span><span>지금은 아래 <strong>회원정보 수정</strong>에서 프로필 사진과 비밀번호를 확인하거나 변경할 수 있습니다.</span></div>
+      </div>
+    </section>
+  </main>
+  <script>const TOKEN = '';</script>
+</body>
+</html>
