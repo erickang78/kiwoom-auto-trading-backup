@@ -1,5 +1,5 @@
 example.invalid {
-    reverse_proxy 127.0.0.1:8788
+    reverse_proxy 127.0.0.1:8898
     header {
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
