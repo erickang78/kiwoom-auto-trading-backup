@@ -198,6 +198,44 @@ class SharedGatewayTest(unittest.TestCase):
         cookie = self.login("newmember", "abcdefghij")
         self.assertEqual(json.loads(self.request("GET", "/v1/marker", headers={"Cookie": cookie})[2])["marker"], "candidate")
 
+    def test_signup_photo_preview_and_profile_storage(self):
+        _, headers, page = self.request("GET", "/signup")
+        self.assertIn('type="file" accept="image/jpeg,image/png,image/webp"', page)
+        self.assertIn('id="photo-preview"', page)
+        self.assertIn("URL.createObjectURL(file)", page)
+        csrf = re.search(r'name="_csrf" value="([A-Za-z0-9_-]{43})"', page).group(1)
+        invite = self.auth.invite("candidate")
+
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+
+        image = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(b"\0\0\0\0")) + chunk(b"IEND", b"")
+
+        def submit(photo, kind="image/png"):
+            boundary = "TestSignupBoundary"
+            parts = []
+            for name, value in (("_csrf", csrf), ("invite", invite), ("username", "newmember"), ("password", "abcdefghij"), ("confirm_password", "abcdefghij")):
+                parts.append((f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").encode())
+            parts.extend(((f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"avatar.png\"\r\nContent-Type: {kind}\r\n\r\n").encode(), photo, b"\r\n", (f"--{boundary}--\r\n").encode()))
+            conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+            try:
+                conn.request("POST", "/signup", b"".join(parts), {"Host": "shared.example.test", "Cookie": headers["Set-Cookie"].split(";", 1)[0], "Content-Type": "multipart/form-data; boundary=" + boundary})
+                response = conn.getresponse()
+                response.read()
+                return response.status, dict(response.getheaders())
+            finally:
+                conn.close()
+
+        self.assertEqual(submit(b"invalid")[0], 400)
+        self.assertIsNone(self.auth.login("newmember", "abcdefghij"))
+        status, response = submit(image)
+        self.assertEqual(status, 303)
+        self.assertEqual(response["Location"], "/login?registered=1")
+        cookie = self.login("newmember", "abcdefghij")
+        self.assertEqual(self.request("GET", "/account/photo", headers={"Cookie": cookie})[0], 200)
+        self.assertEqual((self.app.root / "secrets/photos/candidate-001.image").read_bytes(), image)
+        self.assertEqual(self.request("GET", "/account/photo", headers={"Cookie": self.login("owner", "owner-private-password")})[0], 404)
+
     def test_api_posts_keep_strict_origin_requirement(self):
         cookie = self.login("owner", "owner-private-password")
         for origin in (None, "null"):

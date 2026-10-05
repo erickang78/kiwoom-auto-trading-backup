@@ -11,6 +11,8 @@ import json
 import re
 import threading
 import time
+from email import policy
+from email.parser import BytesParser
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,7 +24,7 @@ from account_settings import account_page, image_type, save_credentials, trading
 
 STYLE = '<style>body{font-family:system-ui;background:#f2f5f8;color:#142236;margin:0;display:grid;place-items:center;min-height:100vh}main{box-sizing:border-box;background:white;border-radius:20px;padding:30px;width:min(92vw,420px)}label{display:block;margin:18px 0 7px}input,button{box-sizing:border-box;width:100%;padding:13px;font:inherit;border-radius:10px}input{border:1px solid #cdd8e3}button{margin-top:17px;border:0;background:#147a67;color:white;font-weight:700}p{color:#66758a}</style>'
 LOGIN = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>키움 자동매매 · 로그인</title>'+STYLE+'<main><h1>키움 자동매매</h1><form method="post" action="/login"><label for="username">사용자 이름</label><input id="username" name="username" required autocomplete="username"><label for="password">비밀번호</label><input id="password" name="password" type="password" required autocomplete="current-password"><button>로그인</button></form><p><a href="/signup">초대받아 회원가입하기</a></p></main></html>'
-SIGNUP = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>키움 자동매매 · 회원가입</title>'+STYLE+'<main><h1>회원가입</h1><p>관리자에게 받은 초대 코드로 가입하고 로그인 ID를 직접 정합니다.</p><form method="post" action="/signup"><label for="invite">초대 코드</label><input id="invite" name="invite" required autocomplete="off"><label for="username">사용할 ID</label><input id="username" name="username" pattern="[a-z][a-z0-9-]{2,30}" minlength="3" maxlength="31" required autocomplete="username"><p>영문 소문자로 시작하는 3~31자의 영문 소문자·숫자·-</p><label for="password">비밀번호 (10자 이상)</label><input id="password" name="password" type="password" minlength="10" required autocomplete="new-password"><label for="confirm_password">비밀번호 확인</label><input id="confirm_password" name="confirm_password" type="password" minlength="10" required autocomplete="new-password"><button>회원가입</button></form><p><a href="/login">로그인으로 돌아가기</a></p></main></html>'
+SIGNUP = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>키움 자동매매 · 회원가입</title>'+STYLE+'<main><h1>회원가입</h1><p>관리자에게 받은 초대 코드로 가입하고 로그인 ID를 직접 정합니다.</p><form method="post" action="/signup" enctype="multipart/form-data"><label for="invite">초대 코드</label><input id="invite" name="invite" required autocomplete="off"><label for="username">사용할 ID</label><input id="username" name="username" pattern="[a-z][a-z0-9-]{2,30}" minlength="3" maxlength="31" required autocomplete="username"><p>영문 소문자로 시작하는 3~31자의 영문 소문자·숫자·-</p><label for="password">비밀번호 (10자 이상)</label><input id="password" name="password" type="password" minlength="10" required autocomplete="new-password"><label for="confirm_password">비밀번호 확인</label><input id="confirm_password" name="confirm_password" type="password" minlength="10" required autocomplete="new-password"><label for="photo">프로필 사진 (선택)</label><input id="photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp"><div id="photo-preview-wrap" hidden style="margin-top:12px"><img id="photo-preview" alt="선택한 프로필 사진 미리보기" style="width:88px;height:88px;object-fit:cover;border-radius:16px"><p id="photo-name"></p></div><p id="photo-error" role="alert"></p><small>JPG·PNG·WebP, 최대 256KB</small><button>회원가입</button></form><p><a href="/login">로그인으로 돌아가기</a></p></main><script>const photoInput=document.querySelector("#photo"),photoPreview=document.querySelector("#photo-preview"),photoWrap=document.querySelector("#photo-preview-wrap"),photoName=document.querySelector("#photo-name"),photoError=document.querySelector("#photo-error");let photoUrl;photoInput.addEventListener("change",()=>{if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl=undefined;photoPreview.removeAttribute("src");photoWrap.hidden=true;photoError.textContent="";const file=photoInput.files[0];if(!file)return;if(!["image/jpeg","image/png","image/webp"].includes(file.type)||file.size>262144){photoInput.value="";photoError.textContent="JPG·PNG·WebP 사진을 256KB 이하로 선택해 주세요.";return}photoUrl=URL.createObjectURL(file);photoPreview.src=photoUrl;photoName.textContent=file.name;photoWrap.hidden=false});</script></html>'
 
 
 class SharedGateway:
@@ -102,8 +104,54 @@ class SharedGateway:
                     raise ValueError("incomplete request")
                 return data
 
+            def form(self, path):
+                content_type = self.headers.get("Content-Type", "")
+                if path not in ("/signup", "/activate") or not content_type.startswith("multipart/form-data;"):
+                    return parse_qs(self.body().decode()), None
+                if "\r" in content_type or "\n" in content_type or len(content_type) > 200:
+                    raise ValueError("invalid multipart header")
+                envelope = ("Content-Type: " + content_type + "\r\nMIME-Version: 1.0\r\n\r\n").encode() + self.body(300000)
+                message = BytesParser(policy=policy.default).parsebytes(envelope)
+                if not message.is_multipart() or len(message.get_payload()) > 7:
+                    raise ValueError("invalid multipart body")
+                fields = {}
+                photo = None
+                for part in message.iter_parts():
+                    if part.get_content_disposition() != "form-data":
+                        raise ValueError("invalid multipart part")
+                    name = part.get_param("name", header="content-disposition")
+                    value = part.get_payload(decode=True)
+                    if name == "photo":
+                        if photo is not None or value is None or len(value) > 262144:
+                            raise ValueError("invalid photo")
+                        if value:
+                            if image_type(value) != part.get_content_type():
+                                raise ValueError("invalid photo")
+                            photo = value
+                    elif name in ("_csrf", "invite", "username", "password", "confirm_password"):
+                        if name in fields or value is None or len(value) > 2048:
+                            raise ValueError("invalid form field")
+                        fields[name] = [value.decode("utf-8")]
+                    else:
+                        raise ValueError("unexpected form field")
+                return fields, photo
+
             def photo_file(self, user):
                 return app.root / "secrets" / "photos" / (user["tenant_id"] + ".image")
+
+            def save_photo(self, user, data):
+                target = self.photo_file(user)
+                target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                temporary = target.with_name(target.name + "." + secrets.token_hex(8))
+                fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                try:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(data)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary, target)
+                finally:
+                    temporary.unlink(missing_ok=True)
 
             def account(self, user, message="", code=200):
                 tenant = app.tenant_for(user)
@@ -167,7 +215,10 @@ class SharedGateway:
             def do_GET(self):
                 path = urlsplit(self.path).path
                 if path == "/login":
-                    message = '<p role="status">회원가입이 완료됐습니다. 로그인해 주세요.</p>' if parse_qs(urlsplit(self.path).query).get("registered") == ["1"] else ""
+                    query = parse_qs(urlsplit(self.path).query)
+                    message = '<p role="status">회원가입이 완료됐습니다. 로그인해 주세요.</p>' if query.get("registered") == ["1"] else ""
+                    if query.get("photo") == ["failed"]:
+                        message += '<p role="alert">사진 저장에 실패했습니다. 로그인 후 회원정보에서 다시 등록해 주세요.</p>'
                     return self.respond(200, LOGIN.replace("<h1>키움 자동매매</h1>", "<h1>키움 자동매매</h1>" + message))
                 if path in ("/signup", "/activate"):
                     return self.respond(200, SIGNUP)
@@ -247,23 +298,12 @@ class SharedGateway:
                         kind = image_type(data)
                         if not kind or kind != self.headers.get("Content-Type"):
                             return self.respond(400, "Invalid image")
-                        target = self.photo_file(user)
-                        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-                        temporary = target.with_name(target.name + "." + secrets.token_hex(8))
-                        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                        try:
-                            with os.fdopen(fd, "wb") as handle:
-                                handle.write(data)
-                                handle.flush()
-                                os.fsync(handle.fileno())
-                            os.replace(temporary, target)
-                        finally:
-                            temporary.unlink(missing_ok=True)
+                        self.save_photo(user, data)
                         return self.respond(204)
                     except (OSError, ValueError):
                         return self.respond(400, "Invalid image")
                 try:
-                    data = parse_qs(self.body().decode())
+                    data, signup_photo = self.form(path)
                     supplied_csrf = data.get("_csrf", [""])[0]
                     cookie_csrf = self.csrf_cookie()
                     valid_csrf = (
@@ -342,7 +382,17 @@ class SharedGateway:
                     if password != data.get("confirm_password", [""])[0]:
                         return self.respond(400, SIGNUP.replace("<h1>회원가입</h1>", "<h1>회원가입</h1><p role='alert'>비밀번호 확인 값이 일치하지 않습니다.</p>"))
                     if app.auth.activate(username, data.get("invite", [""])[0], password):
-                        return self.respond(303, extra={"Location": "/login?registered=1"})
+                        location = "/login?registered=1"
+                        if signup_photo:
+                            try:
+                                with app.auth.connect() as db:
+                                    row = db.execute("SELECT tenant_id FROM users WHERE username=? AND enabled=1", (username,)).fetchone()
+                                if not row:
+                                    raise OSError("activated tenant missing")
+                                self.save_photo({"tenant_id": row[0]}, signup_photo)
+                            except OSError:
+                                location += "&photo=failed"
+                        return self.respond(303, extra={"Location": location})
                 else:
                     token = app.auth.login(username, password)
                     if token:
