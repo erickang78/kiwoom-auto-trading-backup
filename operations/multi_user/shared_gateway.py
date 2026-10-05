@@ -56,7 +56,7 @@ class SharedGateway:
             for key in ("real_credentials_file", "upbit_credentials_file"):
                 if tenant.get(key):
                     path = Path(tenant[key])
-                    if path.resolve() in protected or path.resolve() in credential_paths or path.parent.resolve() != path.parent:
+                    if path.resolve() in protected or path.resolve() in credential_paths or path.parent.is_symlink():
                         raise ValueError("credential path overlaps protected or another tenant file")
                     credential_paths.append(path.resolve())
             if tenant.get("auto_trading_state_file") and not Path(tenant["auto_trading_state_file"]).is_absolute():
