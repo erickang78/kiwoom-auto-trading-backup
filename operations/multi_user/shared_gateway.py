@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from shared_auth import SharedAuth
-from account_settings import account_page, image_type, save_credentials, trading_stopped, stopped_trading
+from account_settings import account_page, image_type, rotate_api_key, save_credentials, trading_stopped, stopped_trading
 
 
 STYLE = '<style>body{font-family:system-ui;background:#f2f5f8;color:#142236;margin:0;display:grid;place-items:center;min-height:100vh}main{box-sizing:border-box;background:white;border-radius:20px;padding:30px;width:min(92vw,420px)}label{display:block;margin:18px 0 7px}input,button{box-sizing:border-box;width:100%;padding:13px;font:inherit;border-radius:10px}input{border:1px solid #cdd8e3}button{margin-top:17px;border:0;background:#147a67;color:white;font-weight:700}p{color:#66758a}</style>'
@@ -53,7 +53,7 @@ class SharedGateway:
             for key in ("real_credentials_file", "upbit_credentials_file"):
                 if tenant.get(key):
                     path = Path(tenant[key])
-                    if path.resolve() in protected or path.resolve() in credential_paths or path.parent.resolve() != path.parent:
+                    if path.resolve() in protected or path.resolve() in credential_paths or path.parent.is_symlink():
                         raise ValueError("credential path overlaps protected or another tenant file")
                     credential_paths.append(path.resolve())
             if tenant.get("auto_trading_state_file") and not Path(tenant["auto_trading_state_file"]).is_absolute():
@@ -224,7 +224,7 @@ class SharedGateway:
                     if not user:
                         return self.respond(401, json.dumps({"error": "login_required"}), "application/json")
                     return self.proxy(user)
-                if path not in ("/login", "/activate", "/logout", "/change-password", "/account/username", "/account/credentials", "/account/photo", "/account/kakao"):
+                if path not in ("/login", "/activate", "/logout", "/change-password", "/account/username", "/account/credentials", "/account/api-key", "/account/photo", "/account/kakao"):
                     return self.respond(404, "Not found")
                 origin = self.headers.get("Origin")
                 if origin not in (None, "null", app.origin):
@@ -285,7 +285,7 @@ class SharedGateway:
                     if action == "setup":
                         payload.update(client_id=data.get("client_id", [""])[0], client_secret=data.get("client_secret", [""])[0])
                     return self.proxy(user, payload)
-                if path in ("/account/username", "/account/credentials"):
+                if path in ("/account/username", "/account/credentials", "/account/api-key"):
                     user = self.user()
                     if not user:
                         return self.respond(401, LOGIN)
@@ -295,6 +295,12 @@ class SharedGateway:
                         if not app.auth.change_username(self.token(), data.get("password", [""])[0], data.get("new_username", [""])[0]):
                             return self.account(user, "사용할 수 없는 ID입니다.")
                         return self.respond(303, extra={"Location": "/login", "Set-Cookie": "moa_shared_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict"})
+                    if path == "/account/api-key":
+                        try:
+                            rotate_api_key(Path((app.tenant_for(user) or {})["backend_token_file"]), data.get("new_key", [""])[0])
+                        except (KeyError, OSError, ValueError):
+                            return self.account(user, "API key를 변경하지 못했습니다. 24자 이상 공백 없는 값을 입력해 주세요.")
+                        return self.respond(303, extra={"Location": "/account"})
                     tenant = app.tenant_for(user) or {}
                     kind = data.get("kind", [""])[0]
                     key = "real_credentials_file" if kind == "kiwoom-real" else "upbit_credentials_file" if kind == "upbit" else None

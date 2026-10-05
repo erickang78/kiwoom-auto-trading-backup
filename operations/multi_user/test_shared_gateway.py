@@ -86,7 +86,7 @@ class SharedGatewayTest(unittest.TestCase):
     def request(self, method, path, data=None, headers=None, csrf=True):
         headers = dict(headers or {})
         headers.setdefault("Host", "shared.example.test")
-        if csrf and method == "POST" and path in ("/login", "/activate", "/change-password", "/logout", "/account/username", "/account/credentials", "/account/kakao"):
+        if csrf and method == "POST" and path in ("/login", "/activate", "/change-password", "/logout", "/account/username", "/account/credentials", "/account/api-key", "/account/kakao"):
             form_path = "/account" if path.startswith("/account/") else path if path != "/logout" else "/"
             _, form_headers, form = self.request("GET", form_path, headers=headers)
             token = re.search(r'name="_csrf" value="([A-Za-z0-9_-]{43})"', form).group(1)
@@ -244,6 +244,23 @@ class SharedGatewayTest(unittest.TestCase):
             self.assertEqual(self.request("POST", "/account/kakao", fields, {"Cookie": cookie}, csrf=False)[0], 403)
             self.assertEqual(self.request("POST", "/account/kakao", fields, {"Cookie": cookie})[0], 200)
         self.assertEqual(self.request("POST", "/account/kakao", urlencode({"action": "test"}), {"Cookie": cookie})[0], 400)
+
+    def test_api_key_rotation_is_session_protected_and_tenant_scoped(self):
+        owner = self.login("owner", "owner-private-password")
+        pilot = self.login("pilot", "pilot-private-password")
+        owner_token = Path(self.app.tenants["owner"]["backend_token_file"])
+        pilot_token = Path(self.app.tenants["pilot-001"]["backend_token_file"])
+        fields = urlencode({"new_key": "a-new-long-private-api-key-123", "password": "wrong"})
+        self.assertNotEqual(self.request("POST", "/account/api-key", fields, {"Cookie": owner})[0], 303)
+        self.assertEqual(self.request("POST", "/account/api-key", fields, {"Cookie": owner}, csrf=False)[0], 403)
+        self.assertEqual(owner_token.read_text(), "owner-backend-key")
+        fields = urlencode({"new_key": "a-new-long-private-api-key-123", "password": "owner-private-password"})
+        self.assertEqual(self.request("POST", "/account/api-key", fields, {"Cookie": owner})[0], 303)
+        self.assertEqual(owner_token.read_text().strip(), "a-new-long-private-api-key-123")
+        self.assertEqual(owner_token.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(pilot_token.read_text(), "pilot-backend-key")
+        self.assertNotIn("a-new-long-private-api-key-123", self.request("GET", "/account", headers={"Cookie": owner})[2])
+        self.assertEqual(self.request("GET", "/account", headers={"Cookie": pilot})[0], 200)
 
     def test_credential_config_rejects_protected_or_shared_paths(self):
         config = self.app.config
