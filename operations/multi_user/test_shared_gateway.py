@@ -49,7 +49,7 @@ class SharedGatewayTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         tenants = {}
-        for marker in ("owner", "pilot"):
+        for marker in ("owner", "pilot", "candidate"):
             static = root / marker
             static.mkdir()
             (static / "index.html").write_text('<html><body><img class="ericgolf-logo" src="data:image/jpeg;base64,AAE="><script>const TOKEN=\'secret\';</script></body></html>')
@@ -61,7 +61,7 @@ class SharedGatewayTest(unittest.TestCase):
             threading.Thread(target=backend.serve_forever, daemon=True).start()
             self.addCleanup(backend.server_close)
             self.addCleanup(backend.shutdown)
-            tenant_id = "owner" if marker == "owner" else "pilot-001"
+            tenant_id = "owner" if marker == "owner" else marker + "-001"
             credentials = root / (marker + "-secrets")
             credentials.mkdir()
             state = root / (marker + "-trading.sqlite3")
@@ -78,6 +78,7 @@ class SharedGatewayTest(unittest.TestCase):
         invite = self.auth.invite("pilot")
         self.assertTrue(self.auth.activate("pilot", invite, "pilot-private-password"))
         self.assertFalse(self.auth.activate("pilot", invite, "pilot-private-password"))
+        self.auth.add_user("candidate", "candidate-001")
         app = SharedGateway(root)
         self.app = app
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), app.handler())
@@ -88,7 +89,7 @@ class SharedGatewayTest(unittest.TestCase):
     def request(self, method, path, data=None, headers=None, csrf=True):
         headers = dict(headers or {})
         headers.setdefault("Host", "shared.example.test")
-        if csrf and method == "POST" and path in ("/login", "/activate", "/change-password", "/logout", "/account/credentials", "/account/kakao"):
+        if csrf and method == "POST" and path in ("/login", "/signup", "/activate", "/change-password", "/logout", "/account/credentials", "/account/kakao"):
             form_path = "/account" if path.startswith("/account/") else path if path != "/logout" else "/"
             _, form_headers, form = self.request("GET", form_path, headers=headers)
             token = re.search(r'name="_csrf" value="([A-Za-z0-9_-]{43})"', form).group(1)
@@ -168,6 +169,29 @@ class SharedGatewayTest(unittest.TestCase):
         self.assertEqual(self.request("GET", "/change-password", headers={"Cookie": cookie})[0], 200)
         self.assertEqual(self.request("POST", "/change-password", urlencode({"current_password": "owner-private-password", "new_password": "new-private-password", "confirm_password": "new-private-password"}), {"Cookie": cookie})[0], 303)
         self.assertIsNotNone(self.auth.login("owner", "new-private-password"))
+
+    def test_invitation_signup_page_and_activation(self):
+        status, _, login_page = self.request("GET", "/login")
+        self.assertEqual(status, 200)
+        self.assertIn('href="/signup"', login_page)
+        status, _, signup_page = self.request("GET", "/signup")
+        self.assertEqual(status, 200)
+        self.assertIn('name="confirm_password"', signup_page)
+        self.assertIn('minlength="10"', signup_page)
+        self.assertEqual(self.request("POST", "/signup", urlencode({"username": "stranger", "invite": "invalid", "password": "abcdefghij", "confirm_password": "abcdefghij"}))[0], 401)
+        invite = self.auth.invite("candidate")
+        fields = {"username": "candidate", "invite": invite, "password": "abcdefghij", "confirm_password": "different"}
+        self.assertEqual(self.request("POST", "/signup", urlencode(fields))[0], 400)
+        self.assertIsNone(self.auth.login("candidate", "abcdefghij"))
+        fields["confirm_password"] = "abcdefghij"
+        self.assertEqual(self.request("POST", "/signup", urlencode(fields), csrf=False)[0], 403)
+        status, headers, _ = self.request("POST", "/signup", urlencode(fields))
+        self.assertEqual(status, 303)
+        self.assertEqual(headers["Location"], "/login?registered=1")
+        self.assertEqual(self.request("POST", "/signup", urlencode(fields))[0], 401)
+        self.assertIn("회원가입이 완료", self.request("GET", "/login?registered=1")[2])
+        cookie = self.login("candidate", "abcdefghij")
+        self.assertEqual(json.loads(self.request("GET", "/v1/marker", headers={"Cookie": cookie})[2])["marker"], "candidate")
 
     def test_api_posts_keep_strict_origin_requirement(self):
         cookie = self.login("owner", "owner-private-password")

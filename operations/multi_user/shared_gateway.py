@@ -21,8 +21,8 @@ from account_settings import account_page, image_type, save_credentials, trading
 
 
 STYLE = '<style>body{font-family:system-ui;background:#f2f5f8;color:#142236;margin:0;display:grid;place-items:center;min-height:100vh}main{box-sizing:border-box;background:white;border-radius:20px;padding:30px;width:min(92vw,420px)}label{display:block;margin:18px 0 7px}input,button{box-sizing:border-box;width:100%;padding:13px;font:inherit;border-radius:10px}input{border:1px solid #cdd8e3}button{margin-top:17px;border:0;background:#147a67;color:white;font-weight:700}p{color:#66758a}</style>'
-LOGIN = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>키움 자동매매 · 로그인</title>'+STYLE+'<main><h1>키움 자동매매</h1><form method="post" action="/login"><label for="username">사용자 이름</label><input id="username" name="username" required autocomplete="username"><label for="password">비밀번호</label><input id="password" name="password" type="password" required autocomplete="current-password"><button>로그인</button></form></main></html>'
-ACTIVATE = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>초대 계정 활성화</title>'+STYLE+'<main><h1>초대 계정 활성화</h1><form method="post" action="/activate"><label for="username">사용자 이름</label><input id="username" name="username" required><label for="invite">초대 코드</label><input id="invite" name="invite" required><label for="password">새 비밀번호 (10자 이상)</label><input id="password" name="password" type="password" minlength="10" required autocomplete="new-password"><button>활성화</button></form></main></html>'
+LOGIN = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>키움 자동매매 · 로그인</title>'+STYLE+'<main><h1>키움 자동매매</h1><form method="post" action="/login"><label for="username">사용자 이름</label><input id="username" name="username" required autocomplete="username"><label for="password">비밀번호</label><input id="password" name="password" type="password" required autocomplete="current-password"><button>로그인</button></form><p><a href="/signup">초대받아 회원가입하기</a></p></main></html>'
+SIGNUP = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>키움 자동매매 · 회원가입</title>'+STYLE+'<main><h1>회원가입</h1><p>관리자에게 받은 ID와 초대 코드로 계정을 활성화합니다.</p><form method="post" action="/signup"><label for="username">초대받은 ID</label><input id="username" name="username" required autocomplete="username"><label for="invite">초대 코드</label><input id="invite" name="invite" required autocomplete="off"><label for="password">비밀번호 (10자 이상)</label><input id="password" name="password" type="password" minlength="10" required autocomplete="new-password"><label for="confirm_password">비밀번호 확인</label><input id="confirm_password" name="confirm_password" type="password" minlength="10" required autocomplete="new-password"><button>회원가입</button></form><p><a href="/login">로그인으로 돌아가기</a></p></main></html>'
 
 
 class SharedGateway:
@@ -167,9 +167,10 @@ class SharedGateway:
             def do_GET(self):
                 path = urlsplit(self.path).path
                 if path == "/login":
-                    return self.respond(200, LOGIN)
-                if path == "/activate":
-                    return self.respond(200, ACTIVATE)
+                    message = '<p role="status">회원가입이 완료됐습니다. 로그인해 주세요.</p>' if parse_qs(urlsplit(self.path).query).get("registered") == ["1"] else ""
+                    return self.respond(200, LOGIN.replace("<h1>키움 자동매매</h1>", "<h1>키움 자동매매</h1>" + message))
+                if path in ("/signup", "/activate"):
+                    return self.respond(200, SIGNUP)
                 user = self.user()
                 if path == "/change-password":
                     return self.account(user) if user else self.respond(401, LOGIN)
@@ -226,7 +227,7 @@ class SharedGateway:
                     if not user:
                         return self.respond(401, json.dumps({"error": "login_required"}), "application/json")
                     return self.proxy(user)
-                if path not in ("/login", "/activate", "/logout", "/change-password", "/account/credentials", "/account/photo", "/account/kakao"):
+                if path not in ("/login", "/signup", "/activate", "/logout", "/change-password", "/account/credentials", "/account/photo", "/account/kakao"):
                     return self.respond(404, "Not found")
                 origin = self.headers.get("Origin")
                 if origin not in (None, "null", app.origin):
@@ -337,9 +338,11 @@ class SharedGateway:
                     key = (username, self.client_address[0])
                     if app.failures.get(key, (0, 0))[1] >= 10:
                         return self.respond(429, "잠시 후 다시 시도해 주세요.")
-                if path == "/activate":
+                if path in ("/signup", "/activate"):
+                    if password != data.get("confirm_password", [""])[0]:
+                        return self.respond(400, SIGNUP.replace("<h1>회원가입</h1>", "<h1>회원가입</h1><p role='alert'>비밀번호 확인 값이 일치하지 않습니다.</p>"))
                     if app.auth.activate(username, data.get("invite", [""])[0], password):
-                        return self.respond(303, extra={"Location": "/"})
+                        return self.respond(303, extra={"Location": "/login?registered=1"})
                 else:
                     token = app.auth.login(username, password)
                     if token:
@@ -347,7 +350,7 @@ class SharedGateway:
                 with app.lock:
                     when, count = app.failures.get(key, (now, 0))
                     app.failures[key] = (when, count + 1)
-                self.respond(401, ACTIVATE if path == "/activate" else LOGIN)
+                self.respond(401, SIGNUP.replace("<h1>회원가입</h1>", "<h1>회원가입</h1><p role='alert'>초대 정보 또는 비밀번호를 확인해 주세요.</p>") if path in ("/signup", "/activate") else LOGIN)
 
         return Handler
 
