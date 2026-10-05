@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from shared_auth import SharedAuth
-from account_settings import account_page, image_type, save_credentials, trading_stopped
+from account_settings import account_page, image_type, save_credentials, trading_stopped, stopped_trading
 
 
 STYLE = '<style>body{font-family:system-ui;background:#f2f5f8;color:#142236;margin:0;display:grid;place-items:center;min-height:100vh}main{box-sizing:border-box;background:white;border-radius:20px;padding:30px;width:min(92vw,420px)}label{display:block;margin:18px 0 7px}input,button{box-sizing:border-box;width:100%;padding:13px;font:inherit;border-radius:10px}input{border:1px solid #cdd8e3}button{margin-top:17px;border:0;background:#147a67;color:white;font-weight:700}p{color:#66758a}</style>'
@@ -46,6 +46,18 @@ class SharedGateway:
             for key in ("real_credentials_file", "upbit_credentials_file"):
                 if tenant.get(key) and not Path(tenant[key]).is_absolute():
                     raise ValueError("tenant credential paths must be absolute")
+        credential_paths = []
+        protected = {(self.root / "secrets/users.sqlite3").resolve()}
+        protected.update(Path(t["backend_token_file"]).resolve() for t in self.tenants.values())
+        for tenant in self.tenants.values():
+            for key in ("real_credentials_file", "upbit_credentials_file"):
+                if tenant.get(key):
+                    path = Path(tenant[key])
+                    if path.resolve() in protected or path.resolve() in credential_paths or path.parent.resolve() != path.parent:
+                        raise ValueError("credential path overlaps protected or another tenant file")
+                    credential_paths.append(path.resolve())
+            if tenant.get("auto_trading_state_file") and not Path(tenant["auto_trading_state_file"]).is_absolute():
+                raise ValueError("trading state path must be absolute")
         self.auth = SharedAuth(self.root / "secrets/users.sqlite3")
         self.failures = {}
         self.lock = threading.Lock()
@@ -83,7 +95,10 @@ class SharedGateway:
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 <= size <= limit:
                     raise ValueError("request too large")
-                return self.rfile.read(size)
+                data = self.rfile.read(size)
+                if len(data) != size:
+                    raise ValueError("incomplete request")
+                return data
 
             def photo_file(self, user):
                 return app.root / "secrets" / "photos" / (user["tenant_id"] + ".image")
@@ -109,21 +124,23 @@ class SharedGateway:
             def user(self):
                 return app.auth.session_user(self.token())
 
-            def proxy(self, user):
+            def proxy(self, user, kakao_payload=None):
                 tenant = app.tenant_for(user)
                 if not tenant:
                     return self.respond(503, json.dumps({"error": "tenant_unavailable"}), "application/json")
-                if self.command == "POST" and self.headers.get("Origin") != app.origin:
+                if self.command == "POST" and kakao_payload is None and self.headers.get("Origin") != app.origin:
                     return self.respond(403, "Forbidden")
                 try:
-                    body = self.body() if self.command == "POST" else None
+                    body = json.dumps(kakao_payload).encode() if kakao_payload is not None else self.body() if self.command == "POST" else None
                     bearer = Path(tenant["backend_token_file"]).read_text().strip()
                     headers = {"Authorization": "Bearer " + bearer, "Origin": tenant["backend_origin"]}
-                    if self.headers.get("Content-Type"):
+                    if kakao_payload is not None:
+                        headers["Content-Type"] = "application/json"
+                    elif self.headers.get("Content-Type"):
                         headers["Content-Type"] = self.headers["Content-Type"]
                     conn = http.client.HTTPConnection("127.0.0.1", int(tenant["api_port"]), timeout=30)
                     try:
-                        conn.request(self.command, self.path, body=body, headers=headers)
+                        conn.request("POST" if kakao_payload is not None else self.command, "/v1/notifications/kakao" if kakao_payload is not None else self.path, body=body, headers=headers)
                         response = conn.getresponse()
                         payload = response.read(1024 * 1024 + 1)
                         if len(payload) > 1024 * 1024:
@@ -154,13 +171,16 @@ class SharedGateway:
                 user = self.user()
                 if path == "/change-password":
                     return self.respond(200, CHANGE_PASSWORD if user else LOGIN)
+                if path == "/account/kakao/status":
+                    return self.proxy(user, {"action": "status"}) if user else self.respond(401, "Login required")
                 if path == "/account":
                     return self.account(user) if user else self.respond(401, LOGIN)
                 if path == "/account/photo":
                     if not user:
                         return self.respond(401, "Login required")
                     try:
-                        data = self.photo_file(user).read_bytes()
+                        with self.photo_file(user).open("rb") as photo:
+                            data = photo.read(262145)
                         kind = image_type(data)
                         return self.respond(200, data, kind) if kind else self.respond(404, "Not found")
                     except OSError:
@@ -190,9 +210,9 @@ class SharedGateway:
                         script = tenant.get("extra_script_file")
                         if script and Path(script).is_file():
                             content = content.replace("</body>", "<script>" + Path(script).read_text() + "</script></body>")
-                        profile_script = "<script>(()=>{const img=document.querySelector('img.ericgolf-logo');if(!img)return;img.style.cursor='pointer';img.title='회원정보 수정';img.tabIndex=0;img.setAttribute('role','link');img.setAttribute('aria-label','회원정보 수정');img.onclick=()=>location.assign('/account');img.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();location.assign('/account')}};" + ("img.src='/account/photo';" if self.photo_file(user).is_file() else "") + "})();</script>"
+                        profile_script = "<script>(()=>{const img=document.querySelector('img.ericgolf-logo, .logo img');if(!img)return;img.style.cursor='pointer';img.title='회원정보 수정';img.tabIndex=0;img.setAttribute('role','link');img.setAttribute('aria-label','회원정보 수정');img.onclick=()=>location.assign('/account');img.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();location.assign('/account')}};" + ("img.src='/account/photo';" if self.photo_file(user).is_file() else "") + "})();</script>"
                         content = content.replace("</body>", profile_script + "</body>")
-                        content = content.replace("</body>", '<div style="text-align:center;padding:20px"><a href="/change-password">비밀번호 변경</a><form action="/logout" method="post"><button type="submit">로그아웃</button></form></div></body>')
+                        content = content.replace("</body>", '<div style="text-align:center;padding:20px"><a href="/account">회원정보 수정</a> · <a href="/change-password">비밀번호 변경</a><form action="/logout" method="post"><button type="submit">로그아웃</button></form></div></body>')
                     self.respond(200, content, "text/javascript; charset=utf-8" if filename.endswith(".js") else "text/html; charset=utf-8")
                 except OSError:
                     self.respond(503, "Tenant dashboard unavailable")
@@ -204,7 +224,7 @@ class SharedGateway:
                     if not user:
                         return self.respond(401, json.dumps({"error": "login_required"}), "application/json")
                     return self.proxy(user)
-                if path not in ("/login", "/activate", "/logout", "/change-password", "/account/username", "/account/credentials", "/account/photo"):
+                if path not in ("/login", "/activate", "/logout", "/change-password", "/account/username", "/account/credentials", "/account/photo", "/account/kakao"):
                     return self.respond(404, "Not found")
                 origin = self.headers.get("Origin")
                 if origin not in (None, "null", app.origin):
@@ -217,7 +237,7 @@ class SharedGateway:
                         return self.respond(401, "Login required")
                     supplied_csrf = self.headers.get("X-Moa-CSRF", "")
                     cookie_csrf = self.csrf_cookie()
-                    if not (re.fullmatch(r"[A-Za-z0-9_-]{43}", supplied_csrf) and hmac.compare_digest(supplied_csrf, cookie_csrf)):
+                    if not (re.fullmatch(r"[A-Za-z0-9_-]{43}", supplied_csrf) and re.fullmatch(r"[A-Za-z0-9_-]{43}", cookie_csrf) and hmac.compare_digest(supplied_csrf, cookie_csrf)):
                         return self.respond(403, "Forbidden")
                     try:
                         data = self.body(262144)
@@ -252,6 +272,19 @@ class SharedGateway:
                     return self.respond(400, "Invalid request")
                 if not valid_csrf:
                     return self.respond(403, "Forbidden")
+                if path == "/account/kakao":
+                    user = self.user()
+                    if not user:
+                        return self.respond(401, "Login required")
+                    action = data.get("action", [""])[0]
+                    if action not in ("setup", "authorize", "disconnect"):
+                        return self.respond(400, "Unsupported Kakao action")
+                    if action in ("setup", "disconnect") and not app.auth.verify_session_password(self.token(), data.get("password", [""])[0]):
+                        return self.respond(401, json.dumps({"error": "password_required"}), "application/json")
+                    payload = {"action": action}
+                    if action == "setup":
+                        payload.update(client_id=data.get("client_id", [""])[0], client_secret=data.get("client_secret", [""])[0])
+                    return self.proxy(user, payload)
                 if path in ("/account/username", "/account/credentials"):
                     user = self.user()
                     if not user:
@@ -267,10 +300,15 @@ class SharedGateway:
                     key = "real_credentials_file" if kind == "kiwoom-real" else "upbit_credentials_file" if kind == "upbit" else None
                     if not key or not tenant.get(key):
                         return self.respond(400, "Unsupported credential type")
-                    if kind == "kiwoom-real" and not trading_stopped(tenant.get("auto_trading_state_file")):
-                        return self.account(user, "자동매매가 실행 중이거나 미처리 주문이 있어 키움 연결정보를 변경할 수 없습니다.")
                     try:
-                        save_credentials(Path(tenant[key]), kind, data.get("key", [""])[0], data.get("secret", [""])[0])
+                        with app.lock:
+                            if kind == "kiwoom-real":
+                                with stopped_trading(tenant.get("auto_trading_state_file")) as stopped:
+                                    if not stopped:
+                                        return self.account(user, "자동매매가 실행 중이거나 미처리 주문이 있어 키움 연결정보를 변경할 수 없습니다.")
+                                    save_credentials(Path(tenant[key]), kind, data.get("key", [""])[0], data.get("secret", [""])[0])
+                            else:
+                                save_credentials(Path(tenant[key]), kind, data.get("key", [""])[0], data.get("secret", [""])[0])
                     except (OSError, ValueError):
                         return self.account(user, "연결정보를 저장하지 못했습니다. 값을 확인해 주세요.")
                     return self.respond(303, extra={"Location": "/account"})

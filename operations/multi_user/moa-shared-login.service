@@ -15,7 +15,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadOnlyPaths=/opt/kiwoom/dashboard-source /opt/kiwoom/backup-tools /opt/kiwoom/backup_status.py
-ReadWritePaths=/opt/kiwoom/shared-router/secrets /opt/kiwoom/secrets
+ReadWritePaths=/opt/kiwoom/shared-router/secrets /opt/kiwoom/secrets /opt/kiwoom/state/auto-trading.sqlite3
 
 [Install]
 WantedBy=multi-user.target

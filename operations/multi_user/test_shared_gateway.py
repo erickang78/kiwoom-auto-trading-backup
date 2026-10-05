@@ -1,4 +1,6 @@
 import http.client
+import struct
+import zlib
 import json
 import re
 import sqlite3
@@ -84,7 +86,7 @@ class SharedGatewayTest(unittest.TestCase):
     def request(self, method, path, data=None, headers=None, csrf=True):
         headers = dict(headers or {})
         headers.setdefault("Host", "shared.example.test")
-        if csrf and method == "POST" and path in ("/login", "/activate", "/change-password", "/logout", "/account/username", "/account/credentials"):
+        if csrf and method == "POST" and path in ("/login", "/activate", "/change-password", "/logout", "/account/username", "/account/credentials", "/account/kakao"):
             form_path = "/account" if path.startswith("/account/") else path if path != "/logout" else "/"
             _, form_headers, form = self.request("GET", form_path, headers=headers)
             token = re.search(r'name="_csrf" value="([A-Za-z0-9_-]{43})"', form).group(1)
@@ -97,7 +99,7 @@ class SharedGatewayTest(unittest.TestCase):
         try:
             conn.request(method, path, body=data, headers=headers or {})
             response = conn.getresponse()
-            return response.status, dict(response.getheaders()), response.read().decode()
+            return response.status, dict(response.getheaders()), response.read().decode(errors="replace")
         finally:
             conn.close()
 
@@ -229,15 +231,45 @@ class SharedGatewayTest(unittest.TestCase):
         self.assertIsNone(self.auth.login("owner", "owner-private-password"))
         self.assertEqual(self.auth.session_user(self.auth.login("sugjin", "owner-private-password"))["tenant_id"], "owner")
 
+    def test_kakao_account_route_is_scoped_and_requires_reauthentication(self):
+        self.assertEqual(self.request("GET", "/account/kakao/status")[0], 401)
+        cookie = self.login("owner", "owner-private-password")
+        status, _, body = self.request("GET", "/account/kakao/status", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["marker"], "owner")
+        for action in ("setup", "disconnect"):
+            fields = urlencode({"action": action, "password": "wrong", "client_id": "fake"})
+            self.assertEqual(self.request("POST", "/account/kakao", fields, {"Cookie": cookie})[0], 401)
+            fields = urlencode({"action": action, "password": "owner-private-password", "client_id": "fake"})
+            self.assertEqual(self.request("POST", "/account/kakao", fields, {"Cookie": cookie}, csrf=False)[0], 403)
+            self.assertEqual(self.request("POST", "/account/kakao", fields, {"Cookie": cookie})[0], 200)
+        self.assertEqual(self.request("POST", "/account/kakao", urlencode({"action": "test"}), {"Cookie": cookie})[0], 400)
+
+    def test_credential_config_rejects_protected_or_shared_paths(self):
+        config = self.app.config
+        root = self.app.root
+        for path in (config["tenants"]["owner"]["backend_token_file"], config["tenants"]["pilot-001"]["upbit_credentials_file"]):
+            with self.subTest(path=path):
+                changed = json.loads(json.dumps(config))
+                changed["tenants"]["owner"]["real_credentials_file"] = path
+                (root / "config.json").write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    SharedGateway(root)
+
     def test_profile_photo_is_tenant_scoped_and_validated(self):
         owner = self.login("owner", "owner-private-password")
         pilot = self.login("pilot", "pilot-private-password")
         _, headers, page = self.request("GET", "/account", headers={"Cookie": owner})
         csrf = re.search(r'name="_csrf" value="([A-Za-z0-9_-]{43})"', page).group(1)
         cookies = owner + "; " + headers["Set-Cookie"].split(";", 1)[0]
-        image = b"\x89PNG\r\n\x1a\n" + b"test-image"
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+        image = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(b"\0\0\0\0")) + chunk(b"IEND", b"")
         common = {"Cookie": cookies, "X-Moa-CSRF": csrf, "Content-Type": "image/png"}
         self.assertEqual(self.request("POST", "/account/photo", image, common, csrf=False)[0], 204)
+        self.assertEqual(self.request("GET", "/account/photo", headers={"Cookie": owner})[0], 200)
+        self.assertEqual(self.request("POST", "/account/photo", image, {**common, "Content-Type": "image/jpeg"}, csrf=False)[0], 400)
+        self.assertEqual(self.request("POST", "/account/photo", image * 4000, common, csrf=False)[0], 400)
         self.assertEqual(self.request("GET", "/account/photo", headers={"Cookie": pilot})[0], 404)
         self.assertEqual(self.request("POST", "/account/photo", b"not-an-image", common, csrf=False)[0], 400)
         self.assertEqual(self.request("POST", "/account/photo", image, {**common, "X-Moa-CSRF": "wrong"}, csrf=False)[0], 403)
