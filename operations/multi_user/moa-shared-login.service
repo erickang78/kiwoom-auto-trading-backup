@@ -14,8 +14,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadOnlyPaths=/opt/kiwoom/dashboard-source /opt/kiwoom/secrets /opt/kiwoom/backup-tools /opt/kiwoom/backup_status.py
-ReadWritePaths=/opt/kiwoom/shared-router/secrets
+ReadOnlyPaths=/opt/kiwoom/dashboard-source /opt/kiwoom/backup-tools /opt/kiwoom/backup_status.py
+ReadWritePaths=/opt/kiwoom/shared-router/secrets /opt/kiwoom/secrets
 
 [Install]
 WantedBy=multi-user.target

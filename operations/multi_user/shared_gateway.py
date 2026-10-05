@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import hmac
+import os
 import secrets
 import importlib.util
 import json
@@ -16,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from shared_auth import SharedAuth
+from account_settings import account_page, image_type, save_credentials, trading_stopped
 
 
 STYLE = '<style>body{font-family:system-ui;background:#f2f5f8;color:#142236;margin:0;display:grid;place-items:center;min-height:100vh}main{box-sizing:border-box;background:white;border-radius:20px;padding:30px;width:min(92vw,420px)}label{display:block;margin:18px 0 7px}input,button{box-sizing:border-box;width:100%;padding:13px;font:inherit;border-radius:10px}input{border:1px solid #cdd8e3}button{margin-top:17px;border:0;background:#147a67;color:white;font-weight:700}p{color:#66758a}</style>'
@@ -41,6 +43,9 @@ class SharedGateway:
             for key in ("dashboard_root", "backend_token_file"):
                 if not Path(tenant[key]).is_absolute():
                     raise ValueError("tenant paths must be absolute")
+            for key in ("real_credentials_file", "upbit_credentials_file"):
+                if tenant.get(key) and not Path(tenant[key]).is_absolute():
+                    raise ValueError("tenant credential paths must be absolute")
         self.auth = SharedAuth(self.root / "secrets/users.sqlite3")
         self.failures = {}
         self.lock = threading.Lock()
@@ -74,11 +79,20 @@ class SharedGateway:
                 self.end_headers()
                 self.wfile.write(body)
 
-            def body(self):
+            def body(self, limit=8192):
                 size = int(self.headers.get("Content-Length", "0"))
-                if not 0 <= size <= 8192:
+                if not 0 <= size <= limit:
                     raise ValueError("request too large")
                 return self.rfile.read(size)
+
+            def photo_file(self, user):
+                return app.root / "secrets" / "photos" / (user["tenant_id"] + ".image")
+
+            def account(self, user, message=""):
+                tenant = app.tenant_for(user)
+                if not tenant:
+                    return self.respond(503, "Tenant unavailable")
+                return self.respond(200, account_page(user["username"], tenant, self.photo_file(user).is_file(), message))
 
             def token(self):
                 try:
@@ -140,6 +154,17 @@ class SharedGateway:
                 user = self.user()
                 if path == "/change-password":
                     return self.respond(200, CHANGE_PASSWORD if user else LOGIN)
+                if path == "/account":
+                    return self.account(user) if user else self.respond(401, LOGIN)
+                if path == "/account/photo":
+                    if not user:
+                        return self.respond(401, "Login required")
+                    try:
+                        data = self.photo_file(user).read_bytes()
+                        kind = image_type(data)
+                        return self.respond(200, data, kind) if kind else self.respond(404, "Not found")
+                    except OSError:
+                        return self.respond(404, "Not found")
                 if path == "/v1/backup/status":
                     if not user:
                         return self.respond(401, json.dumps({"error": "login_required"}), "application/json")
@@ -165,6 +190,8 @@ class SharedGateway:
                         script = tenant.get("extra_script_file")
                         if script and Path(script).is_file():
                             content = content.replace("</body>", "<script>" + Path(script).read_text() + "</script></body>")
+                        profile_script = "<script>(()=>{const img=document.querySelector('img.ericgolf-logo');if(!img)return;img.style.cursor='pointer';img.title='회원정보 수정';img.tabIndex=0;img.setAttribute('role','link');img.setAttribute('aria-label','회원정보 수정');img.onclick=()=>location.assign('/account');img.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();location.assign('/account')}};" + ("img.src='/account/photo';" if self.photo_file(user).is_file() else "") + "})();</script>"
+                        content = content.replace("</body>", profile_script + "</body>")
                         content = content.replace("</body>", '<div style="text-align:center;padding:20px"><a href="/change-password">비밀번호 변경</a><form action="/logout" method="post"><button type="submit">로그아웃</button></form></div></body>')
                     self.respond(200, content, "text/javascript; charset=utf-8" if filename.endswith(".js") else "text/html; charset=utf-8")
                 except OSError:
@@ -177,13 +204,41 @@ class SharedGateway:
                     if not user:
                         return self.respond(401, json.dumps({"error": "login_required"}), "application/json")
                     return self.proxy(user)
-                if path not in ("/login", "/activate", "/logout", "/change-password"):
+                if path not in ("/login", "/activate", "/logout", "/change-password", "/account/username", "/account/credentials", "/account/photo"):
                     return self.respond(404, "Not found")
                 origin = self.headers.get("Origin")
                 if origin not in (None, "null", app.origin):
                     return self.respond(403, "Forbidden")
                 if self.headers.get("Host", "").lower() != urlsplit(app.origin).netloc.lower():
                     return self.respond(403, "Forbidden")
+                if path == "/account/photo":
+                    user = self.user()
+                    if not user:
+                        return self.respond(401, "Login required")
+                    supplied_csrf = self.headers.get("X-Moa-CSRF", "")
+                    cookie_csrf = self.csrf_cookie()
+                    if not (re.fullmatch(r"[A-Za-z0-9_-]{43}", supplied_csrf) and hmac.compare_digest(supplied_csrf, cookie_csrf)):
+                        return self.respond(403, "Forbidden")
+                    try:
+                        data = self.body(262144)
+                        kind = image_type(data)
+                        if not kind or kind != self.headers.get("Content-Type"):
+                            return self.respond(400, "Invalid image")
+                        target = self.photo_file(user)
+                        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                        temporary = target.with_name(target.name + "." + secrets.token_hex(8))
+                        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                        try:
+                            with os.fdopen(fd, "wb") as handle:
+                                handle.write(data)
+                                handle.flush()
+                                os.fsync(handle.fileno())
+                            os.replace(temporary, target)
+                        finally:
+                            temporary.unlink(missing_ok=True)
+                        return self.respond(204)
+                    except (OSError, ValueError):
+                        return self.respond(400, "Invalid image")
                 try:
                     data = parse_qs(self.body().decode())
                     supplied_csrf = data.get("_csrf", [""])[0]
@@ -197,6 +252,28 @@ class SharedGateway:
                     return self.respond(400, "Invalid request")
                 if not valid_csrf:
                     return self.respond(403, "Forbidden")
+                if path in ("/account/username", "/account/credentials"):
+                    user = self.user()
+                    if not user:
+                        return self.respond(401, LOGIN)
+                    if not app.auth.verify_session_password(self.token(), data.get("password", [""])[0]):
+                        return self.account(user, "현재 로그인 비밀번호를 확인해 주세요.")
+                    if path == "/account/username":
+                        if not app.auth.change_username(self.token(), data.get("password", [""])[0], data.get("new_username", [""])[0]):
+                            return self.account(user, "사용할 수 없는 ID입니다.")
+                        return self.respond(303, extra={"Location": "/login", "Set-Cookie": "moa_shared_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict"})
+                    tenant = app.tenant_for(user) or {}
+                    kind = data.get("kind", [""])[0]
+                    key = "real_credentials_file" if kind == "kiwoom-real" else "upbit_credentials_file" if kind == "upbit" else None
+                    if not key or not tenant.get(key):
+                        return self.respond(400, "Unsupported credential type")
+                    if kind == "kiwoom-real" and not trading_stopped(tenant.get("auto_trading_state_file")):
+                        return self.account(user, "자동매매가 실행 중이거나 미처리 주문이 있어 키움 연결정보를 변경할 수 없습니다.")
+                    try:
+                        save_credentials(Path(tenant[key]), kind, data.get("key", [""])[0], data.get("secret", [""])[0])
+                    except (OSError, ValueError):
+                        return self.account(user, "연결정보를 저장하지 못했습니다. 값을 확인해 주세요.")
+                    return self.respond(303, extra={"Location": "/account"})
                 if path == "/logout":
                     app.auth.logout(self.token())
                     return self.respond(303, extra={"Location": "/", "Set-Cookie": "moa_shared_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict"})

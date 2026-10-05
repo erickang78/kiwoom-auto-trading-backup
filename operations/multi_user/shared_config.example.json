@@ -6,6 +6,9 @@
       "dashboard_root": "/opt/kiwoom/dashboard-source/dist",
       "api_port": 8787,
       "backend_token_file": "/opt/kiwoom/secrets/dashboard-token",
+      "real_credentials_file": "/opt/kiwoom/secrets/real-credentials.json",
+      "upbit_credentials_file": "/opt/kiwoom/secrets/upbit-credentials.json",
+      "auto_trading_state_file": "/opt/kiwoom/state/auto-trading.sqlite3",
       "backend_origin": "https://moa-invest-sep22.erickang78.chatgpt.site",
       "backup_status_file": "/opt/kiwoom/backup_status.py",
       "extra_script_file": "/opt/kiwoom/backup-tools/dashboard-status.js"

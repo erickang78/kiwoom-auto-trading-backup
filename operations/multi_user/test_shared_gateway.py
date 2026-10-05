@@ -1,6 +1,7 @@
 import http.client
 import json
 import re
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -57,7 +58,13 @@ class SharedGatewayTest(unittest.TestCase):
             self.addCleanup(backend.server_close)
             self.addCleanup(backend.shutdown)
             tenant_id = "owner" if marker == "owner" else "pilot-001"
-            tenants[tenant_id] = {"api_port": backend.server_port, "dashboard_root": str(static), "backend_token_file": str(token_file), "backend_origin": "https://backend.example.test"}
+            credentials = root / (marker + "-secrets")
+            credentials.mkdir()
+            state = root / (marker + "-trading.sqlite3")
+            with sqlite3.connect(state) as db:
+                db.execute("CREATE TABLE portfolios (enabled INTEGER)")
+                db.execute("CREATE TABLE intents (status TEXT)")
+            tenants[tenant_id] = {"api_port": backend.server_port, "dashboard_root": str(static), "backend_token_file": str(token_file), "backend_origin": "https://backend.example.test", "real_credentials_file": str(credentials / "real.json"), "upbit_credentials_file": str(credentials / "upbit.json"), "auto_trading_state_file": str(state)}
         (root / "config.json").write_text(json.dumps({"origin": "https://shared.example.test", "port": 8898, "tenants": tenants}))
         self.auth = SharedAuth(root / "secrets/users.sqlite3")
         self.auth.initialize()
@@ -68,6 +75,7 @@ class SharedGatewayTest(unittest.TestCase):
         self.assertTrue(self.auth.activate("pilot", invite, "pilot-private-password"))
         self.assertFalse(self.auth.activate("pilot", invite, "pilot-private-password"))
         app = SharedGateway(root)
+        self.app = app
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), app.handler())
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
@@ -76,8 +84,9 @@ class SharedGatewayTest(unittest.TestCase):
     def request(self, method, path, data=None, headers=None, csrf=True):
         headers = dict(headers or {})
         headers.setdefault("Host", "shared.example.test")
-        if csrf and method == "POST" and path in ("/login", "/activate", "/change-password", "/logout"):
-            _, form_headers, form = self.request("GET", path if path != "/logout" else "/", headers=headers)
+        if csrf and method == "POST" and path in ("/login", "/activate", "/change-password", "/logout", "/account/username", "/account/credentials"):
+            form_path = "/account" if path.startswith("/account/") else path if path != "/logout" else "/"
+            _, form_headers, form = self.request("GET", form_path, headers=headers)
             token = re.search(r'name="_csrf" value="([A-Za-z0-9_-]{43})"', form).group(1)
             fields = parse_qs(data or "")
             fields["_csrf"] = [token]
@@ -176,6 +185,63 @@ class SharedGatewayTest(unittest.TestCase):
         self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": other_cookie})[0], 401)
         self.assertIsNone(self.auth.login("owner", "owner-private-password"))
         self.assertIsNotNone(self.auth.login("owner", "new-private-password"))
+
+    def test_account_settings_keep_tenant_credentials_private(self):
+        owner = self.login("owner", "owner-private-password")
+        pilot = self.login("pilot", "pilot-private-password")
+        self.assertEqual(self.request("GET", "/account")[0], 401)
+        page = self.request("GET", "/account", headers={"Cookie": owner})[2]
+        self.assertIn("회원정보 수정", page)
+        self.assertNotIn("owner-backend-key", page)
+        for cookie, kind, password in ((owner, "kiwoom-real", "owner-private-password"), (pilot, "upbit", "pilot-private-password")):
+            fields = urlencode({"kind": kind, "key": "new-access-key", "secret": "new-secret-key", "password": password})
+            self.assertEqual(self.request("POST", "/account/credentials", fields, {"Cookie": cookie})[0], 303)
+        owner_real = Path(self.app.tenants["owner"]["real_credentials_file"])
+        pilot_upbit = Path(self.app.tenants["pilot-001"]["upbit_credentials_file"])
+        self.assertEqual(json.loads(owner_real.read_text()), {"app_key": "new-access-key", "app_secret": "new-secret-key"})
+        self.assertEqual(json.loads(pilot_upbit.read_text()), {"access_key": "new-access-key", "secret_key": "new-secret-key"})
+        self.assertEqual(owner_real.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn("new-secret-key", self.request("GET", "/account", headers={"Cookie": owner})[2])
+        self.assertNotIn("new-secret-key", self.request("GET", "/account", headers={"Cookie": pilot})[2])
+
+    def test_account_credentials_require_password_and_csrf(self):
+        cookie = self.login("owner", "owner-private-password")
+        fields = urlencode({"kind": "kiwoom-real", "key": "new-access-key", "secret": "new-secret-key", "password": "wrong"})
+        self.assertNotEqual(self.request("POST", "/account/credentials", fields, {"Cookie": cookie})[0], 303)
+        self.assertEqual(self.request("POST", "/account/credentials", fields, {"Cookie": cookie}, csrf=False)[0], 403)
+        self.assertFalse(Path(self.app.tenants["owner"]["real_credentials_file"]).exists())
+
+    def test_kiwoom_credentials_are_locked_while_trading_runs(self):
+        cookie = self.login("owner", "owner-private-password")
+        state = self.app.tenants["owner"]["auto_trading_state_file"]
+        with sqlite3.connect(state) as db:
+            db.execute("INSERT INTO portfolios VALUES (1)")
+        fields = urlencode({"kind": "kiwoom-real", "key": "new-access-key", "secret": "new-secret-key", "password": "owner-private-password"})
+        self.assertNotEqual(self.request("POST", "/account/credentials", fields, {"Cookie": cookie})[0], 303)
+        self.assertFalse(Path(self.app.tenants["owner"]["real_credentials_file"]).exists())
+
+    def test_username_change_preserves_tenant_and_revokes_sessions(self):
+        cookie = self.login("owner", "owner-private-password")
+        another = self.login("owner", "owner-private-password")
+        fields = urlencode({"new_username": "sugjin", "password": "owner-private-password"})
+        self.assertEqual(self.request("POST", "/account/username", fields, {"Cookie": cookie})[0], 303)
+        self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": another})[0], 401)
+        self.assertIsNone(self.auth.login("owner", "owner-private-password"))
+        self.assertEqual(self.auth.session_user(self.auth.login("sugjin", "owner-private-password"))["tenant_id"], "owner")
+
+    def test_profile_photo_is_tenant_scoped_and_validated(self):
+        owner = self.login("owner", "owner-private-password")
+        pilot = self.login("pilot", "pilot-private-password")
+        _, headers, page = self.request("GET", "/account", headers={"Cookie": owner})
+        csrf = re.search(r'name="_csrf" value="([A-Za-z0-9_-]{43})"', page).group(1)
+        cookies = owner + "; " + headers["Set-Cookie"].split(";", 1)[0]
+        image = b"\x89PNG\r\n\x1a\n" + b"test-image"
+        common = {"Cookie": cookies, "X-Moa-CSRF": csrf, "Content-Type": "image/png"}
+        self.assertEqual(self.request("POST", "/account/photo", image, common, csrf=False)[0], 204)
+        self.assertEqual(self.request("GET", "/account/photo", headers={"Cookie": pilot})[0], 404)
+        self.assertEqual(self.request("POST", "/account/photo", b"not-an-image", common, csrf=False)[0], 400)
+        self.assertEqual(self.request("POST", "/account/photo", image, {**common, "X-Moa-CSRF": "wrong"}, csrf=False)[0], 403)
+        self.assertEqual(self.request("GET", "/account/photo")[0], 401)
 
 
 if __name__ == "__main__":

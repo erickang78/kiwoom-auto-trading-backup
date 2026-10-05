@@ -91,6 +91,26 @@ class SharedAuth:
             with self.connect() as db:
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
 
+    def verify_session_password(self, token: str, password: str):
+        if not token or len(token) > 128 or len(password) > 1024:
+            return False
+        with self.connect() as db:
+            row = db.execute("SELECT u.salt,u.password_hash FROM sessions s JOIN users u ON u.username=s.username WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1", (hashlib.sha256(token.encode()).hexdigest(), int(time.time()))).fetchone()
+            return bool(row and row[0] and row[1] and hmac.compare_digest(digest(password, bytes.fromhex(row[0])), row[1]))
+
+    def change_username(self, token: str, password: str, new_username: str):
+        if not token or len(token) > 128 or len(password) > 1024 or not re.fullmatch(r"[a-z][a-z0-9-]{2,30}", new_username):
+            return False
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT u.username,u.salt,u.password_hash FROM sessions s JOIN users u ON u.username=s.username WHERE s.token_hash=? AND s.expires_at>? AND u.enabled=1", (hashlib.sha256(token.encode()).hexdigest(), int(time.time()))).fetchone()
+            if not row or not hmac.compare_digest(digest(password, bytes.fromhex(row[1])), row[2]) or db.execute("SELECT 1 FROM users WHERE username=?", (new_username,)).fetchone():
+                return False
+            db.execute("DELETE FROM sessions WHERE username=?", (row[0],))
+            db.execute("DELETE FROM invitations WHERE username=?", (row[0],))
+            db.execute("UPDATE users SET username=? WHERE username=?", (new_username, row[0]))
+        return True
+
     def change_password(self, token: str, current_password: str, new_password: str):
         if not token or len(token) > 128 or not 12 <= len(new_password) <= 1024 or len(current_password) > 1024:
             return False
