@@ -22,8 +22,7 @@ from account_settings import account_page, image_type, rotate_api_key, save_cred
 
 STYLE = '<style>body{font-family:system-ui;background:#f2f5f8;color:#142236;margin:0;display:grid;place-items:center;min-height:100vh}main{box-sizing:border-box;background:white;border-radius:20px;padding:30px;width:min(92vw,420px)}label{display:block;margin:18px 0 7px}input,button{box-sizing:border-box;width:100%;padding:13px;font:inherit;border-radius:10px}input{border:1px solid #cdd8e3}button{margin-top:17px;border:0;background:#147a67;color:white;font-weight:700}p{color:#66758a}</style>'
 LOGIN = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>키움 자동매매 · 로그인</title>'+STYLE+'<main><h1>키움 자동매매</h1><form method="post" action="/login"><label for="username">사용자 이름</label><input id="username" name="username" required autocomplete="username"><label for="password">비밀번호</label><input id="password" name="password" type="password" required autocomplete="current-password"><button>로그인</button></form></main></html>'
-ACTIVATE = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>초대 계정 활성화</title>'+STYLE+'<main><h1>초대 계정 활성화</h1><form method="post" action="/activate"><label for="username">사용자 이름</label><input id="username" name="username" required><label for="invite">초대 코드</label><input id="invite" name="invite" required><label for="password">새 비밀번호 (12자 이상)</label><input id="password" name="password" type="password" minlength="12" required autocomplete="new-password"><button>활성화</button></form></main></html>'
-CHANGE_PASSWORD = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>비밀번호 변경</title>'+STYLE+'<main><h1>비밀번호 변경</h1><form method="post" action="/change-password"><label for="current_password">현재 비밀번호</label><input id="current_password" name="current_password" type="password" required autocomplete="current-password"><label for="new_password">새 비밀번호 (12자 이상)</label><input id="new_password" name="new_password" type="password" minlength="12" required autocomplete="new-password"><button>변경</button></form><p>변경 후 모든 기기에서 다시 로그인해야 합니다.</p><a href="/">돌아가기</a></main></html>'
+ACTIVATE = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>초대 계정 활성화</title>'+STYLE+'<main><h1>초대 계정 활성화</h1><form method="post" action="/activate"><label for="username">사용자 이름</label><input id="username" name="username" required><label for="invite">초대 코드</label><input id="invite" name="invite" required><label for="password">새 비밀번호 (10자 이상)</label><input id="password" name="password" type="password" minlength="10" required autocomplete="new-password"><button>활성화</button></form></main></html>'
 
 
 class SharedGateway:
@@ -106,11 +105,11 @@ class SharedGateway:
             def photo_file(self, user):
                 return app.root / "secrets" / "photos" / (user["tenant_id"] + ".image")
 
-            def account(self, user, message=""):
+            def account(self, user, message="", code=200):
                 tenant = app.tenant_for(user)
                 if not tenant:
                     return self.respond(503, "Tenant unavailable")
-                return self.respond(200, account_page(user["username"], tenant, self.photo_file(user).is_file(), message))
+                return self.respond(code, account_page(user["username"], tenant, self.photo_file(user).is_file(), message))
 
             def token(self):
                 try:
@@ -173,7 +172,7 @@ class SharedGateway:
                     return self.respond(200, ACTIVATE)
                 user = self.user()
                 if path == "/change-password":
-                    return self.respond(200, CHANGE_PASSWORD if user else LOGIN)
+                    return self.account(user) if user else self.respond(401, LOGIN)
                 if path == "/account/kakao/status":
                     return self.proxy(user, {"action": "status"}) if user else self.respond(401, "Login required")
                 if path == "/account":
@@ -215,7 +214,7 @@ class SharedGateway:
                             content = content.replace("</body>", "<script>" + Path(script).read_text() + "</script></body>")
                         profile_script = "<script>(()=>{const img=document.querySelector('img.ericgolf-logo, .logo img');if(!img)return;img.style.cursor='pointer';img.title='회원정보 수정';img.tabIndex=0;img.setAttribute('role','link');img.setAttribute('aria-label','회원정보 수정');img.onclick=()=>location.assign('/account');img.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();location.assign('/account')}};" + ("img.src='/account/photo';" if self.photo_file(user).is_file() else "") + "})();</script>"
                         content = content.replace("</body>", profile_script + "</body>")
-                        content = content.replace("</body>", '<div style="text-align:center;padding:20px"><a href="/account">회원정보 수정</a> · <a href="/change-password">비밀번호 변경</a><form action="/logout" method="post"><button type="submit">로그아웃</button></form></div></body>')
+                        content = content.replace("</body>", '<div style="text-align:center;padding:20px"><a href="/account">회원정보 수정</a> · <a href="/account#password">비밀번호 변경</a><form action="/logout" method="post"><button type="submit">로그아웃</button></form></div></body>')
                     self.respond(200, content, "text/javascript; charset=utf-8" if filename.endswith(".js") else "text/html; charset=utf-8")
                 except OSError:
                     self.respond(503, "Tenant dashboard unavailable")
@@ -227,7 +226,7 @@ class SharedGateway:
                     if not user:
                         return self.respond(401, json.dumps({"error": "login_required"}), "application/json")
                     return self.proxy(user)
-                if path not in ("/login", "/activate", "/logout", "/change-password", "/account/username", "/account/credentials", "/account/api-key", "/account/photo", "/account/kakao"):
+                if path not in ("/login", "/activate", "/logout", "/change-password", "/account/credentials", "/account/api-key", "/account/photo", "/account/kakao"):
                     return self.respond(404, "Not found")
                 origin = self.headers.get("Origin")
                 if origin not in (None, "null", app.origin):
@@ -288,16 +287,12 @@ class SharedGateway:
                     if action == "setup":
                         payload.update(client_id=data.get("client_id", [""])[0], client_secret=data.get("client_secret", [""])[0])
                     return self.proxy(user, payload)
-                if path in ("/account/username", "/account/credentials", "/account/api-key"):
+                if path in ("/account/credentials", "/account/api-key"):
                     user = self.user()
                     if not user:
                         return self.respond(401, LOGIN)
                     if not app.auth.verify_session_password(self.token(), data.get("password", [""])[0]):
                         return self.account(user, "현재 로그인 비밀번호를 확인해 주세요.")
-                    if path == "/account/username":
-                        if not app.auth.change_username(self.token(), data.get("password", [""])[0], data.get("new_username", [""])[0]):
-                            return self.account(user, "사용할 수 없는 ID입니다.")
-                        return self.respond(303, extra={"Location": "/login", "Set-Cookie": "moa_shared_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict"})
                     if path == "/account/api-key":
                         try:
                             with app.lock:
@@ -326,15 +321,18 @@ class SharedGateway:
                     app.auth.logout(self.token())
                     return self.respond(303, extra={"Location": "/", "Set-Cookie": "moa_shared_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict"})
                 if path == "/change-password":
-                    if not self.user():
+                    user = self.user()
+                    if not user:
                         return self.respond(401, LOGIN)
+                    if data.get("new_password", [""])[0] != data.get("confirm_password", [""])[0]:
+                        return self.account(user, "새 비밀번호와 확인 값이 일치하지 않습니다.", 400)
                     try:
                         changed = app.auth.change_password(self.token(), data.get("current_password", [""])[0], data.get("new_password", [""])[0])
                     except (UnicodeError, ValueError):
                         return self.respond(400, "Invalid request")
                     if not changed:
-                        return self.respond(401, CHANGE_PASSWORD.replace("<h1>비밀번호 변경</h1>", "<h1>비밀번호 변경</h1><p>현재 비밀번호 또는 새 비밀번호를 확인해 주세요.</p>"))
-                    return self.respond(303, extra={"Location": "/", "Set-Cookie": "moa_shared_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict"})
+                        return self.account(user, "현재 비밀번호 또는 새 비밀번호를 확인해 주세요.", 401)
+                    return self.respond(303, extra={"Location": "/login", "Set-Cookie": "moa_shared_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict"})
                 try:
                     username = data.get("username", [""])[0]
                     password = data.get("password", [""])[0]

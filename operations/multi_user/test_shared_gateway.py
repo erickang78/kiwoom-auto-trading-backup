@@ -52,7 +52,7 @@ class SharedGatewayTest(unittest.TestCase):
         for marker in ("owner", "pilot"):
             static = root / marker
             static.mkdir()
-            (static / "index.html").write_text("<html><body><script>const TOKEN='secret';</script></body></html>")
+            (static / "index.html").write_text('<html><body><img class="ericgolf-logo" src="data:image/jpeg;base64,AAE="><script>const TOKEN=\'secret\';</script></body></html>')
             (static / "stock-list.js").write_text("const stocks=[]")
             token_file = root / (marker + ".token")
             token_file.write_text(marker + "-backend-key")
@@ -88,7 +88,7 @@ class SharedGatewayTest(unittest.TestCase):
     def request(self, method, path, data=None, headers=None, csrf=True):
         headers = dict(headers or {})
         headers.setdefault("Host", "shared.example.test")
-        if csrf and method == "POST" and path in ("/login", "/activate", "/change-password", "/logout", "/account/username", "/account/credentials", "/account/api-key", "/account/kakao"):
+        if csrf and method == "POST" and path in ("/login", "/activate", "/change-password", "/logout", "/account/credentials", "/account/api-key", "/account/kakao"):
             form_path = "/account" if path.startswith("/account/") else path if path != "/logout" else "/"
             _, form_headers, form = self.request("GET", form_path, headers=headers)
             token = re.search(r'name="_csrf" value="([A-Za-z0-9_-]{43})"', form).group(1)
@@ -166,7 +166,7 @@ class SharedGatewayTest(unittest.TestCase):
         self.assertEqual(status, 303)
         cookie = response["Set-Cookie"].split(";", 1)[0]
         self.assertEqual(self.request("GET", "/change-password", headers={"Cookie": cookie})[0], 200)
-        self.assertEqual(self.request("POST", "/change-password", urlencode({"current_password": "owner-private-password", "new_password": "new-private-password"}), {"Cookie": cookie})[0], 303)
+        self.assertEqual(self.request("POST", "/change-password", urlencode({"current_password": "owner-private-password", "new_password": "new-private-password", "confirm_password": "new-private-password"}), {"Cookie": cookie})[0], 303)
         self.assertIsNotNone(self.auth.login("owner", "new-private-password"))
 
     def test_api_posts_keep_strict_origin_requirement(self):
@@ -181,10 +181,12 @@ class SharedGatewayTest(unittest.TestCase):
     def test_password_change_requires_current_password_and_revokes_sessions(self):
         cookie = self.login("owner", "owner-private-password")
         other_cookie = self.login("owner", "owner-private-password")
-        self.assertEqual(self.request("GET", "/change-password")[0], 200)
-        self.assertEqual(self.request("POST", "/change-password", urlencode({"current_password": "wrong", "new_password": "new-private-password"}), {"Cookie": cookie, "Origin": "https://shared.example.test"})[0], 401)
-        self.assertEqual(self.request("POST", "/change-password", urlencode({"current_password": "owner-private-password", "new_password": "new-private-password"}), {"Cookie": cookie, "Origin": "https://evil.example.test"})[0], 403)
-        self.assertEqual(self.request("POST", "/change-password", urlencode({"current_password": "owner-private-password", "new_password": "new-private-password"}), {"Cookie": cookie, "Origin": "https://shared.example.test"})[0], 303)
+        self.assertEqual(self.request("GET", "/change-password")[0], 401)
+        fields = {"current_password": "owner-private-password", "new_password": "new-private-password", "confirm_password": "new-private-password"}
+        self.assertEqual(self.request("POST", "/change-password", urlencode({**fields, "current_password": "wrong"}), {"Cookie": cookie, "Origin": "https://shared.example.test"})[0], 401)
+        self.assertEqual(self.request("POST", "/change-password", urlencode({**fields, "confirm_password": "different"}), {"Cookie": cookie, "Origin": "https://shared.example.test"})[0], 400)
+        self.assertEqual(self.request("POST", "/change-password", urlencode(fields), {"Cookie": cookie, "Origin": "https://evil.example.test"})[0], 403)
+        self.assertEqual(self.request("POST", "/change-password", urlencode(fields), {"Cookie": cookie, "Origin": "https://shared.example.test"})[0], 303)
         self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": cookie})[0], 401)
         self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": other_cookie})[0], 401)
         self.assertIsNone(self.auth.login("owner", "owner-private-password"))
@@ -224,14 +226,16 @@ class SharedGatewayTest(unittest.TestCase):
         self.assertNotEqual(self.request("POST", "/account/credentials", fields, {"Cookie": cookie})[0], 303)
         self.assertFalse(Path(self.app.tenants["owner"]["real_credentials_file"]).exists())
 
-    def test_username_change_preserves_tenant_and_revokes_sessions(self):
+    def test_account_hides_username_change_and_shows_current_photo_and_password_form(self):
         cookie = self.login("owner", "owner-private-password")
-        another = self.login("owner", "owner-private-password")
+        page = self.request("GET", "/account", headers={"Cookie": cookie})[2]
+        self.assertIn('src="data:image/jpeg;base64,AAE="', page)
+        self.assertIn('width:52px;height:52px', page)
+        self.assertNotIn('action="/account/username"', page)
+        self.assertIn('name="confirm_password"', page)
+        self.assertIn('minlength="10"', page)
         fields = urlencode({"new_username": "sugjin", "password": "owner-private-password"})
-        self.assertEqual(self.request("POST", "/account/username", fields, {"Cookie": cookie})[0], 303)
-        self.assertEqual(self.request("GET", "/v1/marker", headers={"Cookie": another})[0], 401)
-        self.assertIsNone(self.auth.login("owner", "owner-private-password"))
-        self.assertEqual(self.auth.session_user(self.auth.login("sugjin", "owner-private-password"))["tenant_id"], "owner")
+        self.assertEqual(self.request("POST", "/account/username", fields, {"Cookie": cookie})[0], 404)
 
     def test_kakao_account_route_is_scoped_and_requires_reauthentication(self):
         self.assertEqual(self.request("GET", "/account/kakao/status")[0], 401)

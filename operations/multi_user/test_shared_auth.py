@@ -8,6 +8,18 @@ from tenant_auth import TenantAuth
 
 
 class SharedAuthTest(unittest.TestCase):
+    def test_new_password_minimum_is_ten_characters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = SharedAuth(Path(directory) / "users.sqlite3")
+            auth.initialize()
+            auth.add_user("pilot", "pilot-001")
+            invite = auth.invite("pilot")
+            self.assertFalse(auth.activate("pilot", invite, "123456789"))
+            self.assertTrue(auth.activate("pilot", invite, "1234567890"))
+            session = auth.login("pilot", "1234567890")
+            self.assertFalse(auth.change_password(session, "1234567890", "abcdefghi"))
+            self.assertTrue(auth.change_password(session, "1234567890", "abcdefghij"))
+
     def test_bootstrap_owner_reuses_hash_without_copying_key(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

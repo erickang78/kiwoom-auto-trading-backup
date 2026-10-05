@@ -54,7 +54,7 @@ class SharedAuth:
         return token
 
     def activate(self, username: str, token: str, password: str):
-        if not 12 <= len(password) <= 1024:
+        if not 10 <= len(password) <= 1024:
             return False
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with self.connect() as db:
@@ -112,7 +112,7 @@ class SharedAuth:
         return True
 
     def change_password(self, token: str, current_password: str, new_password: str):
-        if not token or len(token) > 128 or not 12 <= len(new_password) <= 1024 or len(current_password) > 1024:
+        if not token or len(token) > 128 or not 10 <= len(new_password) <= 1024 or len(current_password) > 1024:
             return False
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
