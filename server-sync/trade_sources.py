@@ -12,19 +12,33 @@ KST = dt.timezone(dt.timedelta(hours=9))
 
 def number(value):
     value = str(value or '').strip()
-    return str(int(value)) if value.isdigit() and int(value) > 0 else ''
+    try:
+        return str(int(value)) if re.fullmatch(r'[0-9]+', value) and int(value) > 0 else ''
+    except ValueError:
+        return ''
 
 
 def date(value):
-    value = str(value or '')
+    value = str(value or '').strip()
     compact = re.sub(r'[-/]', '', value)
-    if re.fullmatch(r'\d{8}', compact):
-        return compact
+    if re.fullmatch(r'\d{8}|\d{4}-\d{2}-\d{2}|\d{4}/\d{2}/\d{2}', value):
+        try:
+            dt.datetime.strptime(compact, '%Y%m%d')
+            return compact
+        except ValueError:
+            pass
     return ''
 
 
+def stock_code(value, market):
+    if not isinstance(value, str):
+        return ''
+    value = value.strip()
+    return value.removeprefix('A') if market == 'KR' else value
+
+
 def ledger(state):
-    index, unresolved = {}, set()
+    index = {}
     for filename, table, origin in [('auto-trading.sqlite3', 'intents', 'automatic'),
                                     ('manual-orders.sqlite3', 'orders', 'manual')]:
         with closing(sqlite3.connect((state / filename).as_uri() + '?mode=ro', uri=True, timeout=2)) as db:
@@ -33,19 +47,30 @@ def ledger(state):
                 if row['status'] == 'preview':
                     continue
                 payload = json.loads(row['payload'])
-                mode = payload.get('mode', 'real')
+                mode = payload['mode']
                 market = payload['market']
                 created = (dt.datetime.fromisoformat(row['created']) if origin == 'automatic'
                            else dt.datetime.fromtimestamp(row['created'], dt.timezone.utc))
+                if created.tzinfo is None:
+                    raise ValueError('ambiguous_ledger_timezone')
                 day = created.astimezone(KST).strftime('%Y%m%d')
-                ident = number(row['number'] if origin == 'automatic' else json.loads(row['result']).get('order_number'))
+                result = json.loads(row['result']) if origin == 'manual' else {}
+                if not isinstance(result, dict):
+                    raise ValueError('invalid_ledger_result')
+                ident = number(row['number'] if origin == 'automatic' else result.get('order_number'))
                 if not ident:
-                    if origin == 'automatic' and row['status'] in ('unknown', 'reconcile_error'):
-                        unresolved.add((mode, market))
                     continue
                 key = mode, market, day, ident
-                index.setdefault(key, set()).add((origin, payload['code'].removeprefix('A') if market == 'KR' else payload['code']))
-    return index, unresolved
+                confirmed = row['status'] in (('accepted', 'partial', 'filled', 'cancelled')
+                                              if origin == 'automatic' else ('accepted',))
+                # Manual creation is preview time, up to 120s before submission.
+                # A preview spanning KST midnight cannot establish an order day.
+                if origin == 'manual' and (created + dt.timedelta(seconds=120)).astimezone(KST).strftime('%Y%m%d') != day:
+                    confirmed = False
+                code = stock_code(payload['code'], market)
+                # Keep duplicate records: even identical entries are ambiguous.
+                index.setdefault(key, []).append((origin if confirmed else 'unknown', code))
+    return index
 
 
 def annotate_snapshot(body, state=STATE):
@@ -53,29 +78,20 @@ def annotate_snapshot(body, state=STATE):
         return body
     mode = 'real' if body['mode'] == 'REAL_READ_ONLY' else 'mock'
     try:
-        index, unresolved = ledger(state)
-        healthy = True
+        index = ledger(state)
     except (OSError, sqlite3.Error, ValueError, KeyError, TypeError, OverflowError):
-        index, unresolved, healthy = {}, set(), False
-    # These endpoints query today's orders; explicit order dates take precedence.
-    retrieved = dt.datetime.fromisoformat(body['retrieved_at']).astimezone(KST).strftime('%Y%m%d')
+        index = {}
+    # Retrieval/browser time is not order-date evidence. An undated broker row
+    # cannot be linked by number alone: order numbers can repeat on other days.
     for market, section in [('KR', body), ('US', body.get('us')), ('GOLD', body.get('gold'))]:
         if not isinstance(section, dict):
             continue
         for field in ('executions', 'pending_orders'):
             for row in section.get(field, []):
-                day = date(row.get('ord_dt')) if row.get('ord_dt') else retrieved
+                day = date(row.get('ord_dt'))
                 ident = number(row.get('ord_no'))
-                code = str(row.get('stk_cd', '')).strip()
-                if market == 'KR':
-                    code = code.removeprefix('A')
-                matches = index.get((mode, market, day, ident), set())
-                if healthy and day and ident and len(matches) == 1 and next(iter(matches))[1] == code:
-                    source = next(iter(matches))[0]
-                elif healthy and day and ident and not matches and (mode, market) not in unresolved:
-                    # Orders outside this program's automatic ledger were placed manually.
-                    source = 'manual'
-                else:
-                    source = 'unknown'
+                code = stock_code(row.get('stk_cd'), market)
+                matches = index.get((mode, market, day, ident), [])
+                source = matches[0][0] if day and ident and code and len(matches) == 1 and matches[0][1] == code else 'unknown'
                 row['trading_source'] = source
     return body

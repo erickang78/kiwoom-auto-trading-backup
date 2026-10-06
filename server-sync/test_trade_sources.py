@@ -23,16 +23,16 @@ class OriginTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def snapshot(self, **changes):
-        return dict(mode='REAL_READ_ONLY', retrieved_at='2026-09-30T01:00:00+00:00', executions=[dict(ord_no='12',stk_cd='A005930')], us=dict(executions=[dict(ord_no='12',stk_cd='AAPL')]), **changes)
+        return dict(mode='REAL_READ_ONLY', retrieved_at='2026-09-30T01:00:00+00:00', executions=[dict(ord_no='12',stk_cd='A005930',ord_dt='20260930')], us=dict(executions=[dict(ord_no='12',stk_cd='AAPL',ord_dt='20260930')]), **changes)
 
     def test_origin_date_market_mode_and_external_manual(self):
         b=self.snapshot()
         b['executions'] += [dict(ord_no='13',stk_cd='000660'),dict(ord_no='12',stk_cd='000660'),dict(ord_no='12',stk_cd='005930',ord_dt='20260929')]
         t.annotate_snapshot(b,self.root)
-        self.assertEqual([x['trading_source'] for x in b['executions']], ['automatic','manual','unknown','manual'])
+        self.assertEqual([x['trading_source'] for x in b['executions']], ['automatic','unknown','unknown','unknown'])
         self.assertEqual(b['us']['executions'][0]['trading_source'],'manual')
         b=self.snapshot();b['mode']='MOCK_READ_ONLY';t.annotate_snapshot(b,self.root)
-        self.assertEqual(b['executions'][0]['trading_source'],'manual')
+        self.assertEqual(b['executions'][0]['trading_source'],'unknown')
 
     def test_unresolved_or_missing_ledger_never_claims_manual(self):
         with sqlite3.connect(self.root/'auto-trading.sqlite3') as db:

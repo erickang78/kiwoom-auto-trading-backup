@@ -1,4 +1,5 @@
 """Broker-verified restart checks. Never submit, cancel, or replace an order here."""
+import copy
 import datetime as dt
 import json
 import re
@@ -15,7 +16,7 @@ REASONS={
 STAGES={'submit':'주문 전송','reconcile':'주문·체결 확인','account':'계좌·보유 수량 확인','proposal':'주문 조건 점검'}
 
 def explanation(db,row,state):
-    unresolved=[dict(x) for x in db.execute("SELECT id,payload,number,created FROM intents WHERE market=? AND status IN ('unknown','reconcile_error') ORDER BY id",(row['market'],))]
+    unresolved=[dict(x) for x in db.execute("SELECT id,payload,number,created FROM intents WHERE market=? AND strategy=? AND status IN ('unknown','reconcile_error') ORDER BY id",(row['market'],row['strategy']))]
     failure=state.get('last_failure') or {}
     reason=REASONS.get(failure.get('reason'))
     if not reason and unresolved:reason=REASONS['unknown_order']
@@ -33,11 +34,12 @@ def check(db,row,state,body,now=None):
     import auto_trading as a
     now=now or dt.datetime.now(dt.timezone.utc)
     summary=dict(result='blocked',checked_at=a.stamp(now),message='',orders=[],recovered=[])
+    original=copy.deepcopy(state)
     db.execute('SAVEPOINT restart_check')
     try:
         c=a.trade.client('real') # Refresh authentication; all following broker calls are read-only.
         holdings,sellable,reserved=a.account(c,row['market'])
-        unresolved=db.execute("SELECT * FROM intents WHERE market=? AND status IN ('unknown','reconcile_error') ORDER BY id",(row['market'],)).fetchall()
+        unresolved=db.execute("SELECT * FROM intents WHERE market=? AND strategy=? AND status IN ('unknown','reconcile_error') ORDER BY id",(row['market'],row['strategy'])).fetchall()
         confirmed=body.get('confirmed_absent_orders',[])
         if not isinstance(confirmed,list) or any(type(x) is not int for x in confirmed):raise ValueError('invalid_recovery_confirmation')
         cache={}
@@ -71,7 +73,7 @@ def check(db,row,state,body,now=None):
                     for key in list(state['seen']):
                         if key.endswith(':'+p['exchange']+':'+p['code']):state['seen'].pop(key,None)
                 summary['recovered'].append(intent['id'])
-        remaining=db.execute("SELECT COUNT(*) FROM intents WHERE market=? AND status IN ('unknown','reconcile_error') AND (number IS NULL OR number='')",(row['market'],)).fetchone()[0]
+        remaining=db.execute("SELECT COUNT(*) FROM intents WHERE market=? AND strategy=? AND status IN ('unknown','reconcile_error') AND (number IS NULL OR number='')",(row['market'],row['strategy'])).fetchone()[0]
         if remaining:
             raise RuntimeError('unknown_order')
         a.reconcile(db,c,row,state,now)
@@ -81,6 +83,7 @@ def check(db,row,state,body,now=None):
         db.execute('RELEASE restart_check')
     except Exception as error:
         db.execute('ROLLBACK TO restart_check');db.execute('RELEASE restart_check')
+        state.clear();state.update(original)
         summary['recovered']=[]
         summary['message']=REASONS.get(str(error),'증권사 계좌·주문 조회에 실패했습니다. 연결을 확인하고 다시 점검해 주세요.')
         summary['error_type']=type(error).__name__

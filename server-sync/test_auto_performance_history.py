@@ -21,11 +21,11 @@ class RealHistoryTests(unittest.TestCase):
   with auto.connect(self.path) as db:
    payload=json.dumps(dict(side='buy',code='A',exchange='KRX'))
    db.execute('INSERT INTO intents(market,strategy,dedup,payload,status,filled,applied,average) VALUES(?,?,?,?,?,?,?,?)',('KR','trend','buy1',payload,'filled',1,1,'100'))
-   row=db.execute("SELECT data FROM portfolios WHERE market='KR'").fetchone();state=json.loads(row[0]);state['positions']={'KRX:A':dict(code='A',exchange='KRX',strategy='trend',quantity=1,entry_price=100,last_price=110)}
-   db.execute("UPDATE portfolios SET data=? WHERE market='KR'",(json.dumps(state),))
+   row=db.execute("SELECT data FROM portfolios WHERE market='KR' AND strategy='trend'").fetchone();state=json.loads(row[0]);state['positions']={'KRX:A':dict(code='A',exchange='KRX',strategy='trend',quantity=1,entry_price=100,last_price=110)}
+   db.execute("UPDATE portfolios SET data=? WHERE market='KR' AND strategy='trend'",(json.dumps(state),))
   h.snapshot(self.path,self.now)
   with auto.connect(self.path) as db:
-   state['positions']['KRX:A']['last_price']=95;db.execute("UPDATE portfolios SET data=? WHERE market='KR'",(json.dumps(state),))
+   state['positions']['KRX:A']['last_price']=95;db.execute("UPDATE portfolios SET data=? WHERE market='KR' AND strategy='trend'",(json.dumps(state),))
   h.snapshot(self.path,self.now+dt.timedelta(days=1))
   with auto.connect(self.path) as db:
    series=h.history(db,'KR')['series'];self.assertEqual([p['return_pct'] for p in series[0]['points']],[10,-5]);self.assertIsNone(series[1]['points'][0]['return_pct']);self.assertIsNone(h.history(db,'US')['series'][0]['points'][0]['return_pct'])

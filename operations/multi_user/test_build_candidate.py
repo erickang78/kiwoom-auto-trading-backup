@@ -60,6 +60,26 @@ class PilotBundleTest(unittest.TestCase):
         page = re.sub(r'<div class="creator-credit"[^>]*>.*?</div>', "", page, flags=re.S)
         self.assertNotIn("erickang", generic_dashboard(page))
 
+    def test_new_strategy_actions_remain_blocked_in_pilot(self):
+        import ast, io, json, secrets
+        from types import SimpleNamespace
+        build(SOURCE, self.output, "pilot-001", ORIGIN, 8887, 8888)
+        api=ast.parse((self.output / 'current/refresh_api.py').read_text())
+        handler=next(n for n in api.body if isinstance(n,ast.ClassDef) and n.name=='Handler')
+        method=next(n for n in handler.body if isinstance(n,ast.FunctionDef) and n.name=='do_POST')
+        namespace={'TOKEN_PATH':SimpleNamespace(read_text=lambda:'synthetic-test-token'),
+                   'ALLOWED_ORIGINS':{ORIGIN},'json':json,'secrets':secrets}
+        exec(compile(ast.Module(body=[method],type_ignores=[]),'candidate-handler','exec'),namespace)
+        for path,action in [('/v1/trading/auto',a) for a in ('allocate','start','stop','check_restart')]+[('/v1/trading/control',a) for a in ('pause','resume')]+[('/v1/trade/submit','submit'),('/v1/real/refresh','refresh')]:
+            with self.subTest(path=path,action=action):
+                body=json.dumps({'action':action,'market':'KR','strategy':'breakout','budget':'100000','confirmed':True}).encode()
+                request=SimpleNamespace(path=path,headers={'Origin':ORIGIN,'Authorization':'Bearer synthetic-test-token','Content-Length':str(len(body))},rfile=io.BytesIO(body),_json=lambda status,body:(status,body))
+                self.assertEqual(namespace['do_POST'](request),(403,{'error':'pilot_read_only'}))
+        for name in ('auto_trading.py','strategy_budget.py'):
+            text=(self.output/'current'/name).read_text()
+            self.assertNotIn('/opt/kiwoom/',text)
+        self.assertIn('/opt/kiwoom-tenants/pilot-001/state/auto-trading.sqlite3',(self.output/'current/auto_trading.py').read_text())
+
     def test_refuses_production_ports_and_existing_output(self):
         with self.assertRaises(ValueError):
             build(SOURCE, self.output, "pilot-001", ORIGIN, 8787, 8888)

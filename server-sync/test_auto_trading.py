@@ -24,9 +24,9 @@ class AutoTests(unittest.TestCase):
         return auto.control({'market':'KR','strategy':'trend'},self.db,self.gate)
     def seed(self,positions=None):
         with auto.connect(self.db) as db:
-            row=db.execute("SELECT data FROM portfolios WHERE market='KR'").fetchone();s=json.loads(row[0]);s['observed']={'KRX:005930':{'day':'20260930','volume':10,'at':auto.stamp(NOW-dt.timedelta(seconds=60))}}
+            row=db.execute("SELECT data FROM portfolios WHERE market='KR' AND strategy='trend'").fetchone();s=json.loads(row[0]);s['observed']={'KRX:005930':{'day':'20260930','volume':10,'at':auto.stamp(NOW-dt.timedelta(seconds=60))}}
             if positions is not None:s['positions']=positions
-            db.execute("UPDATE portfolios SET data=? WHERE market='KR'",(json.dumps(s),))
+            db.execute("UPDATE portfolios SET data=? WHERE market='KR' AND strategy='trend'",(json.dumps(s),))
     def run_cycle(self,price=70000,holdings=None,reserved=None,reports=None,send_status='accepted',scan=SCAN):
         def send(c,order):self.sent.append(order);return send_status,'000123' if send_status=='accepted' else ''
         with patch.object(auto,'account',return_value=(holdings or {},holdings or {},reserved or set())),patch.object(auto,'can_buy',return_value=True),patch.object(auto,'send',side_effect=send),patch.object(auto,'order_rows',return_value=reports or []):
@@ -34,9 +34,9 @@ class AutoTests(unittest.TestCase):
     def test_restart_clock_preserves_first_start_and_ledger(self):
         before=self.status();first=before['started_at']
         with auto.connect(self.db) as db:
-            state=json.loads(db.execute("SELECT data FROM portfolios WHERE market='KR'").fetchone()[0])
+            state=json.loads(db.execute("SELECT data FROM portfolios WHERE market='KR' AND strategy='trend'").fetchone()[0])
             state['session_started_at']='2020-01-01T00:00:00+00:00'
-            db.execute("UPDATE portfolios SET data=? WHERE market='KR'",(json.dumps(state),))
+            db.execute("UPDATE portfolios SET data=? WHERE market='KR' AND strategy='trend'",(json.dumps(state),))
         self.assertEqual(self.start()['session_started_at'],'2020-01-01T00:00:00+00:00')
         auto.control({'market':'KR','action':'stop'},self.db,self.gate)
         with patch.object(auto.trade,'client',return_value=object()),patch.object(auto,'account',return_value=({}, {}, set())):
@@ -49,8 +49,8 @@ class AutoTests(unittest.TestCase):
         with patch('auto_performance.cumulative', return_value={'available': True, 'return_pct': 7}) as perf:
             result=auto.control({'market':'KR','strategy':'momentum','action':'status'},self.db,self.gate)
         self.assertEqual(perf.call_args.args[2],'momentum')
-        self.assertEqual(result['strategy'],'trend');self.assertEqual(result['selected_strategy'],'momentum')
-        self.assertTrue(result['enabled']);self.assertFalse(result['selected_active'])
+        self.assertEqual(result['strategy'],'momentum');self.assertEqual(result['selected_strategy'],'momentum')
+        self.assertFalse(result['enabled']);self.assertFalse(result['selected_active'])
         self.assertEqual(result['performance']['return_pct'],7)
         self.assertEqual(self.status()['strategy'],'trend')
 
@@ -69,7 +69,7 @@ class AutoTests(unittest.TestCase):
     def test_external_pending_not_bought(self):
         self.run_cycle(reserved={'005930'});self.assertEqual(self.sent,[])
     def test_budget_limit(self):
-        with auto.connect(self.db) as db:db.execute("UPDATE portfolios SET budget='60000'")
+        with auto.connect(self.db) as db:db.execute("UPDATE portfolios SET budget='60000' WHERE market='KR' AND strategy='trend'")
         self.run_cycle();self.assertEqual(self.sent,[])
     def test_unknown_order_stops_and_cannot_restart(self):
         self.run_cycle(send_status='unknown');self.assertFalse(self.status()['enabled'])
@@ -89,8 +89,8 @@ class AutoTests(unittest.TestCase):
             auto.cycle('KR',self.db,self.gate,NOW,lambda mode:object(),scan,lambda code:{'quote':{'cur_prc':70000,'trde_qty':20}});send.assert_not_called()
     def test_missing_broker_report_stops_without_resend(self):
         self.run_cycle();self.seed();self.run_cycle();self.assertFalse(self.status()['enabled']);self.assertEqual(len(self.sent),1)
-    def test_cannot_switch_active_strategy(self):
-        with self.assertRaisesRegex(ValueError,'has_positions'):auto.control({'market':'KR','strategy':'breakout','action':'start','confirmed':True,'budget':'500000'},self.db,self.gate)
+    def test_other_strategy_requires_room_in_market_allocation(self):
+        with self.assertRaisesRegex(ValueError,'market_allocation_cap'):auto.control({'market':'KR','strategy':'breakout','action':'start','confirmed':True,'budget':'500000'},self.db,self.gate)
     def test_invalid_budget_and_market(self):
         for value in ('0','-1','1.5','100000001',True):
             with self.assertRaises(ValueError):auto.control({'market':'KR','action':'start','confirmed':True,'budget':value},self.db,self.gate)
@@ -142,9 +142,9 @@ class AutoTests(unittest.TestCase):
         position=dict(code='080220',exchange='KRX',name='제주반도체',strategy='trend',quantity=1,entry_price=88400,entry_fx=1,cost_krw=88400,entry_at=auto.stamp(NOW),last_price=88400,last_at=auto.stamp(NOW),return_pct=0)
         self.seed({'KRX:080220':position})
         with auto.connect(self.db) as db:
-            state=json.loads(db.execute("SELECT data FROM portfolios WHERE market='KR'").fetchone()[0])
+            state=json.loads(db.execute("SELECT data FROM portfolios WHERE market='KR' AND strategy='trend'").fetchone()[0])
             state['observed']['KRX:080220']=state['observed']['KRX:005930']
-            db.execute("UPDATE portfolios SET data=? WHERE market='KR'",(json.dumps(state),))
+            db.execute("UPDATE portfolios SET data=? WHERE market='KR' AND strategy='trend'",(json.dumps(state),))
         self.run_cycle(price=93150,holdings={'080220':1},scan={'status':'error'})
         self.assertEqual(self.sent,[]);self.assertTrue(self.status()['enabled'])
         self.assertEqual(self.status()['positions'][0]['quantity'],1)

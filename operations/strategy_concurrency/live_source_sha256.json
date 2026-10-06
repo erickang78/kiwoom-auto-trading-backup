@@ -1,0 +1,15 @@
+{
+  "auto_performance.py": "fdd6e967963f27c43084fcbb0f4e8f78375eddcc4354077da2f7c5a9acde6d0f",
+  "auto_performance_history.py": "3cb57fc361df3e79f86d1be8a781520691d91dcdbb72cc6fa5e36721136e2eb2",
+  "auto_performance_period.py": "267dae5086a60dbef41226bcef50c17775218f2aa7605698b1dca9192ac5f2f6",
+  "auto_recovery.py": "bdf77f76313e445936d0868b3b0e6b98bf42dcdb67e13ed67133ad635eb447bd",
+  "auto_sale_profit.py": "d84bca524daad6774f14c65f3d7e501f4f6184d4e9523e52a7d96b4e10d6afdd",
+  "auto_trading.py": "b00e8c6038868e94d99537816f02cf7d4337f613e5593e0a513ae6417cce0e93",
+  "real_profit_report.py": "54b0526dcc312584bcbcbf80057f25f39788741af119781049717507b6e7d797",
+  "refresh_api.py": "46e55eb6e65926d051847a6dba608a2a751ebcd2f58bfd02ff4585e43ea8b37f",
+  "signal_validation.py": "9d083018f49178bfeb4896fb80192b6ad46778dc39f5584b0a412d4fc212e46b",
+  "trade_sources.py": "188ceb46775b062004b1628d419dd2fe6b51919d1e7db4dc6f30fdb65a705c61",
+  "trading_api.py": "922e62dc3ab4752bece61652ba16e972a15dd98213ec83bb593165c378c68b87",
+  "trading_control.py": "cdfae8980c1fbb39c9bc56388d3581fd59f63b9a92e86ef0556bd333df63408c",
+  "virtual_profit_report.py": "a0e622e9eb7217a2bb71164f61f48d556cc87118460231adec9be848d955b17c"
+}

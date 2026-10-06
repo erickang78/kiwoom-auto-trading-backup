@@ -48,16 +48,18 @@ def regular_window(now, market='US'):
     return local.weekday() < 5 and start <= local.time() < end
 
 
-def buy_quantity(market, price, fx=None):
+def buy_quantity(market, price, fx=None, rules=None):
     price = Decimal(str(price).replace(',', ''))
     rate = Decimal(str(fx).replace(',', '')) if market == 'US' else Decimal(1)
     if not price.is_finite() or price <= 0 or not rate.is_finite() or rate <= 0:
         raise ValueError('invalid_price_or_fx')
     krw = price * rate
+    if rules is not None:
+        return rules['low_price_quantity'] if krw < Decimal(str(rules['low_price_exclusive'])) else rules['mid_price_quantity'] if krw < Decimal(str(rules['mid_price_exclusive'])) else rules['quantity']
     return 5 if krw < Decimal('10000') else 2 if krw <= Decimal('30000') else 1
 
 
-def step(state, scan, quotes, now, market='US', strategy='trend'):
+def step(state, scan, quotes, now, market='US', strategy='trend', *, valuations=None, rules=None):
     portfolio_id(market, strategy)
     """Mutate an isolated state copy; return audit events for one atomic commit.
 
@@ -99,6 +101,10 @@ def step(state, scan, quotes, now, market='US', strategy='trend'):
         price, _ = usable[key]
         gain = (Decimal(str(price)) / Decimal(str(p['entry_price'])) - 1) * 100
         p.update(last_price=price, last_at=stamp(now), return_pct=float(gain))
+        # Export marks before a simulated exit removes the position. Callers may
+        # retain these three fields without adopting any simulated fills.
+        if valuations is not None:
+            valuations[key] = {field: p[field] for field in ('last_price', 'last_at', 'return_pct')}
         reason = '익절 +5%' if gain >= 5 else '손절 -3%' if gain <= -3 else None
         if reason:
             pnl = (price - p['entry_price']) * p['quantity']
@@ -124,7 +130,7 @@ def step(state, scan, quotes, now, market='US', strategy='trend'):
         signal_key = scan['date'] + ':' + key
         if key in state['positions'] or signal_key in state['seen']:
             continue
-        if len(state['positions']) >= RULES['max_positions']:
+        if len(state['positions']) >= (rules or RULES)['max_positions']:
             break
         if key not in usable:
             if key not in quotes:
@@ -136,7 +142,7 @@ def step(state, scan, quotes, now, market='US', strategy='trend'):
         except (ValueError, KeyError, TypeError):
             state['issues'].append(key + ': 환율 확인 실패')
             continue
-        quantity = buy_quantity(market, price, q.get('base_exrt'))
+        quantity = buy_quantity(market, price, q.get('base_exrt'), rules)
         p = dict(code=stock['code'], exchange=stock.get('exchange', 'KRX'), name=stock['name'],
                  strategy=strategy, quantity=quantity, entry_price=price, entry_fx=fx,
                  cost_krw=float(Decimal(quantity)*Decimal(str(price))*Decimal(str(fx))),

@@ -1,5 +1,6 @@
 """Opt-in real strategy trading. Disabled by default; broker-confirmed ownership only."""
 import datetime as dt
+from copy import deepcopy
 import json
 import re
 import sqlite3
@@ -9,10 +10,12 @@ from pathlib import Path
 from signal_validation import STRATEGIES, initial, step, regular_window, stamp, positive, buy_quantity
 from trading_control import locked, read
 import trading_api as trade
+import strategy_budget as budgets
 
 DB = Path('/opt/kiwoom/state/auto-trading.sqlite3')
 CONTROL = Path('/opt/kiwoom/state/trading-control.sqlite3')
 STOCK_MARKETS = {'day': None, 'rows': {}}
+REAL_RULES = dict(quantity=1, quantity_currency='KRW', low_price_exclusive=10000, low_price_quantity=10, mid_price_exclusive=30000, mid_price_quantity=4, max_positions=10, take_profit_pct=5, stop_loss_pct=-3, poll_seconds=60)
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -26,13 +29,14 @@ class ClosingConnection(sqlite3.Connection):
 def connect(path=DB):
     db = sqlite3.connect(path, timeout=120, factory=ClosingConnection)
     db.row_factory = sqlite3.Row
-    db.execute('CREATE TABLE IF NOT EXISTS portfolios (market TEXT PRIMARY KEY, strategy TEXT, enabled INTEGER, revision INTEGER, budget TEXT, started TEXT, data TEXT)')
-    db.execute('CREATE TABLE IF NOT EXISTS intents (id INTEGER PRIMARY KEY, market TEXT, strategy TEXT, dedup TEXT UNIQUE, payload TEXT, status TEXT, number TEXT, filled INTEGER DEFAULT 0, average TEXT, applied INTEGER DEFAULT 0, created TEXT, updated TEXT)')
+    if [c[1] for c in db.execute('PRAGMA table_info(portfolios)') if c[5]] == ['market']:
+        db.close()
+        raise ValueError('legacy_schema_requires_offline_migration')
+    db.execute('BEGIN IMMEDIATE')
+    budgets.migrate(db)
+    db.execute('CREATE TABLE IF NOT EXISTS intents (id INTEGER PRIMARY KEY, market TEXT, strategy TEXT, dedup TEXT UNIQUE, payload TEXT, status TEXT, number TEXT, filled INTEGER DEFAULT 0, average TEXT, applied INTEGER DEFAULT 0, created TEXT, updated TEXT, remaining INTEGER)')
     db.execute('CREATE TABLE IF NOT EXISTS daily_returns (market TEXT,strategy TEXT,day TEXT,at TEXT,data TEXT,PRIMARY KEY(market,strategy,day))')
     db.execute('CREATE TABLE IF NOT EXISTS intent_failures (intent_id INTEGER PRIMARY KEY, data TEXT)')
-    for market in ('KR', 'US'):
-        db.execute('INSERT OR IGNORE INTO portfolios VALUES (?, ?, 0, 0, ?, NULL, ?)',
-                   (market, 'trend', '500000' if market == 'KR' else '1000', json.dumps(initial(dt.datetime.now(dt.timezone.utc)))))
     db.commit()
     return db
 
@@ -59,22 +63,23 @@ def control(body, path=DB, control_path=CONTROL):
             raise ValueError('invalid_report_source')
         from real_profit_report import read_report
         return read_report(path, market, report_strategy)
-    if action not in ('status', 'start', 'stop', 'check_restart'):
+    if action not in ('status', 'start', 'stop', 'check_restart', 'allocate'):
         raise ValueError('invalid_auto_action')
     with locked(control_path) as gate:
         global_state = read(gate)
         with connect(path) as db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT * FROM portfolios WHERE market=?', (market,)).fetchone()
+            row = db.execute('SELECT * FROM portfolios WHERE market=? AND strategy=?', (market,strategy)).fetchone()
             state = json.loads(row['data'])
             if action == 'start':
                 if body.get('confirmed') is not True:
                     raise ValueError('auto_confirmation_required')
                 if not global_state['enabled']:
                     raise ValueError('trading_paused')
-                budget = body.get('budget')
+                budget = body.get('budget', row['budget'])
                 if not isinstance(budget, str) or not budget.isdigit() or not 1 <= int(budget) <= (100000000 if market == 'KR' else 100000):
                     raise ValueError('invalid_auto_budget')
+                budgets.allocate(db, market, strategy, budget)
                 unresolved = db.execute("SELECT COUNT(*) FROM intents WHERE market=? AND status IN ('unknown','reconcile_error')", (market,)).fetchone()[0]
                 restart_required = unresolved or (row['started'] and not row['enabled'])
                 restart_ok = True
@@ -83,35 +88,35 @@ def control(body, path=DB, control_path=CONTROL):
                     restart_ok = check(db,row,state,body)['result'] == 'ready'
                     if not restart_ok:
                         state.update(status='attention',issues=[state['restart_check']['message']])
-                        db.execute('UPDATE portfolios SET data=? WHERE market=?',(json.dumps(state),market))
+                        db.execute('UPDATE portfolios SET data=? WHERE market=? AND strategy=?',(json.dumps(state),market,strategy))
                 if restart_ok:
-                    pending = db.execute("SELECT COUNT(*) FROM intents WHERE market=? AND status IN ('accepted','partial')", (market,)).fetchone()[0]
-                    if row['strategy'] != strategy and (row['enabled'] or state['positions'] or pending):
-                        raise ValueError('auto_strategy_has_positions')
-                    # Keep observations/dedup across stop/start; changing strategy starts fresh.
-                    if row['strategy'] != strategy:
-                        state = initial(dt.datetime.now(dt.timezone.utc))
-                    if not row['enabled'] or row['strategy'] != strategy:
+                    # Independent strategy retains its own observations, holdings and dedup.
+                    if not row['enabled']:
                         state['session_started_at'] = stamp(dt.datetime.now(dt.timezone.utc))
                     state.update(status='waiting', issues=[])
                     state.pop('last_failure',None)
-                    db.execute('UPDATE portfolios SET strategy=?,enabled=1,revision=revision+1,budget=?,started=?,data=? WHERE market=?',
-                               (strategy, budget, (row['started'] if row['strategy'] == strategy and row['started'] else stamp(dt.datetime.now(dt.timezone.utc))), json.dumps(state), market))
+                    db.execute('UPDATE portfolios SET strategy=?,enabled=1,revision=revision+1,budget=?,started=?,data=? WHERE market=? AND strategy=?',
+                               (strategy, budget, (row['started'] or stamp(dt.datetime.now(dt.timezone.utc))), json.dumps(state), market, strategy))
+            elif action == 'allocate':
+                budgets.allocate(db, market, strategy, body.get('budget'))
             elif action == 'check_restart':
                 if row['enabled']:
                     raise ValueError('auto_already_running')
                 from auto_recovery import check
                 check(db,row,state,body)
-                db.execute('UPDATE portfolios SET data=? WHERE market=?',(json.dumps(state),market))
+                db.execute('UPDATE portfolios SET data=? WHERE market=? AND strategy=?',(json.dumps(state),market,strategy))
             elif action == 'stop':
                 state.pop('restart_check',None)
-                db.execute('UPDATE portfolios SET data=? WHERE market=?',(json.dumps(state),market))
-                db.execute('UPDATE portfolios SET enabled=0,revision=revision+1 WHERE market=?', (market,))
-            row = db.execute('SELECT * FROM portfolios WHERE market=?', (market,)).fetchone()
+                db.execute('UPDATE portfolios SET data=? WHERE market=? AND strategy=?',(json.dumps(state),market,strategy))
+                db.execute('UPDATE portfolios SET enabled=0,revision=revision+1 WHERE market=? AND strategy=?', (market,strategy))
+            row = db.execute('SELECT * FROM portfolios WHERE market=? AND strategy=?', (market,strategy)).fetchone()
             state = json.loads(row['data'])
-            orders = [dict(x) for x in db.execute('SELECT * FROM intents WHERE market=? ORDER BY id DESC LIMIT 30', (market,))]
+            orders = [dict(x) for x in db.execute('SELECT * FROM intents WHERE market=? AND strategy=? ORDER BY id DESC LIMIT 30', (market,strategy))]
+            profits = __import__('auto_sale_profit').sale_profits(db, market, strategy)
             for order in orders:
                 order['order'] = json.loads(order.pop('payload'))
+                if order['id'] in profits:
+                    order['sale_profit'] = profits[order['id']]
                 order['trading_source'] = 'automatic'
                 order['order']['trading_source'] = 'automatic'
                 order.pop('dedup', None)
@@ -121,16 +126,17 @@ def control(body, path=DB, control_path=CONTROL):
             return dict(market=market, strategy=row['strategy'], selected_strategy=strategy,
                         selected_active=row['strategy'] == strategy and bool(row['enabled']),
                         enabled=bool(row['enabled']), global_enabled=global_state['enabled'],
-                        budget=row['budget'], started_at=row['started'], currency='KRW' if market == 'KR' else 'USD',
+                        budget=row['budget'], market_budget=budgets.overview(db,market), started_at=row['started'], currency='KRW' if market == 'KR' else 'USD',
                         session_started_at=state.get('session_started_at') or ((state.get('restart_check') or {}).get('checked_at') if row['enabled'] and (state.get('restart_check') or {}).get('result') == 'ready' else None),
                         last_check=state['last_check'], status=state['status'], issues=state['issues'],
                         last_failure=state.get('last_failure'),
                         stop_reason=__import__('auto_recovery').explanation(db,row,state) if not row['enabled'] else None,
                         restart_check=state.get('restart_check'),
                         positions=list(state['positions'].values()), orders=orders,
-                        performance_history=__import__('auto_performance_history').history(db,market),
+                        performance_history=__import__('auto_performance_history').history(db,market,strategy),
                         performance=__import__('auto_performance').cumulative(db,market,strategy,list(state['positions'].values())),
-                        rules=dict(quantity=1, quantity_currency='KRW', low_price_exclusive=10000, low_price_quantity=5, mid_price_inclusive=30000, mid_price_quantity=2, max_positions=5, take_profit_pct=5, stop_loss_pct=-3, poll_seconds=60))
+                        performance_periods=__import__('auto_performance_period').periods(db,market,strategy,list(state['positions'].values())),
+                        rules=dict(REAL_RULES))
 
 
 def pages(c, api, path, body, key):
@@ -172,18 +178,28 @@ def stock_code(code, market):
     return str(code).removeprefix('A') if market == 'KR' else str(code)
 
 
+def account_totals(positions, market, quantity_field, sellable_field):
+    holdings, sellable = {}, {}
+    for p in positions:
+        code=stock_code(p['stk_cd'],market)
+        quantity,available=number(p[quantity_field]),number(p[sellable_field])
+        if quantity!=quantity.to_integral_value() or available!=available.to_integral_value() or available>quantity:
+            raise RuntimeError('account_schema')
+        holdings[code]=holdings.get(code,0)+int(quantity)
+        sellable[code]=sellable.get(code,0)+int(available)
+    return holdings,sellable
+
+
 def account(c, market):
     if market == 'KR':
         positions = pages(c, 'kt00018', '/api/dostk/acnt', {'qry_tp':'2','dmst_stex_tp':'KRX'}, 'acnt_evlt_remn_indv_tot')
         pending = pages(c, 'ka10075', '/api/dostk/acnt', {'all_stk_tp':'0','trde_tp':'0','stk_cd':'','stex_tp':'0'}, 'oso')
-        holdings = {stock_code(p['stk_cd'], market): int(number(p['rmnd_qty'])) for p in positions}
-        sellable = {stock_code(p['stk_cd'], market): int(number(p['trde_able_qty'])) for p in positions}
+        holdings,sellable=account_totals(positions,market,'rmnd_qty','trde_able_qty')
         reserved = {stock_code(p['stk_cd'], market) for p in pending if number(p['oso_qty']) > 0}
     else:
         positions = pages(c, 'ust21070', '/api/us/acnt', {'stex_tp':'','stk_cd':''}, 'result_list')
         pending = pages(c, 'ust21050', '/api/us/acnt', {'ord_dt':'','slby_tp':'0','stex_tp':'','stk_cd':''}, 'result_list')
-        holdings = {str(p['stk_cd']): int(number(p['poss_qty'])) for p in positions}
-        sellable = {str(p['stk_cd']): int(number(p['sell_alowq'])) for p in positions}
+        holdings,sellable=account_totals(positions,market,'poss_qty','sell_alowq')
         reserved = {str(p['stk_cd']) for p in pending if number(p['ord_remnq']) > 0}
     return holdings, sellable, reserved
 
@@ -197,7 +213,7 @@ def order_rows(c, market, date):
 def reconcile(db, c, row, state, now):
     market = row['market']
     cached = {}
-    for intent in db.execute("SELECT * FROM intents WHERE market=? AND status IN ('accepted','partial','unknown','reconcile_error') ORDER BY id", (market,)).fetchall():
+    for intent in db.execute("SELECT * FROM intents WHERE market=? AND strategy=? AND status IN ('accepted','partial','unknown','reconcile_error') ORDER BY id", (market,row['strategy'])).fetchall():
         if not intent['number']:
             raise RuntimeError('unknown_order')
         date = dt.datetime.fromisoformat(intent['created']).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%Y%m%d')
@@ -233,8 +249,8 @@ def reconcile(db, c, row, state, now):
                 if not state['positions'][key]['quantity']:
                     del state['positions'][key]
         status = 'filled' if qty == requested else 'cancelled' if remaining == 0 else 'partial' if qty else 'accepted'
-        db.execute('UPDATE intents SET status=?,filled=?,average=?,applied=?,updated=? WHERE id=?',
-                   (status, qty, str(average) if qty else None, qty, stamp(now), intent['id']))
+        db.execute('UPDATE intents SET status=?,filled=?,average=?,applied=?,updated=?,remaining=? WHERE id=?',
+                   (status, qty, str(average) if qty else None, qty, stamp(now), remaining, intent['id']))
 
 
 def can_buy(c, order):
@@ -322,7 +338,21 @@ def send(c, order):
     return 'accepted', number_
 
 
-def cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, screen_fn=None, quote_fn=None):
+def propose(state, scan, quotes, now, market, strategy):
+    """Keep signal bookkeeping and validated marks, never paper ownership/P&L."""
+    simulated = deepcopy(state)
+    valuations = {}
+    signals = step(simulated, scan, quotes, now, market, strategy, valuations=valuations, rules=REAL_RULES)
+    for field in ('last_check', 'issues', 'scan', 'status', 'observed', 'seen'):
+        state[field] = simulated[field]
+    for key, position in state['positions'].items():
+        if key in valuations:
+            position.update({field: valuations[key][field]
+                             for field in ('last_price', 'last_at', 'return_pct')})
+    return signals
+
+
+def _cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, screen_fn=None, quote_fn=None, strategy='trend'):
     now = now or dt.datetime.now(dt.timezone.utc)
     # Lock order is always global gate -> auto DB. Stop acknowledgement waits for in-flight send.
     with locked(control_path) as gate:
@@ -330,14 +360,15 @@ def cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, scree
         if not global_state['enabled']:
             return
         with connect(path) as db:
-            row = db.execute('SELECT * FROM portfolios WHERE market=?', (market,)).fetchone()
+            row = db.execute('SELECT * FROM portfolios WHERE market=? AND strategy=?', (market,strategy)).fetchone()
             if not row['enabled']:
                 return
             revision = row['revision']
+            market_revision=db.execute('SELECT revision FROM market_budgets WHERE market=?',(market,)).fetchone()[0]
     if not regular_window(now, market):
         with connect(path) as db:
             state = json.loads(row['data']); state.update(status='outside_session', last_check=stamp(now), observed={})
-            db.execute('UPDATE portfolios SET data=? WHERE market=? AND revision=?', (json.dumps(state),market,revision))
+            db.execute('UPDATE portfolios SET data=? WHERE market=? AND strategy=? AND revision=?', (json.dumps(state),market,strategy,revision))
         return
     try:
         c = (client_fn or trade.client)('real')
@@ -357,7 +388,7 @@ def cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, scree
         if scan.get('status') == 'ready':
             stocks.update({p.get('exchange','KRX')+':'+p['code']:p for p in scan.get('stocks',[])})
         with connect(path) as pending_db:
-            for item in pending_db.execute("SELECT payload FROM intents WHERE market=? AND status IN ('accepted','partial')", (market,)):
+            for item in pending_db.execute("SELECT payload FROM intents WHERE market=? AND strategy=? AND status IN ('accepted','partial')", (market,strategy)):
                 p = json.loads(item[0]); stocks[p['exchange']+':'+p['code']] = p
         quotes = {}
         for key,p in stocks.items():
@@ -371,35 +402,41 @@ def cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, scree
             if not current_gate['enabled'] or current_gate['revision'] != global_state['revision']:
                 return
             with connect(path) as db:
-                current = db.execute('SELECT * FROM portfolios WHERE market=?', (market,)).fetchone()
+                db.execute('BEGIN IMMEDIATE')
+                current = db.execute('SELECT * FROM portfolios WHERE market=? AND strategy=?', (market,strategy)).fetchone()
                 if not current['enabled'] or current['revision'] != revision:
+                    return
+                if db.execute('SELECT revision FROM market_budgets WHERE market=?',(market,)).fetchone()[0] != market_revision:
                     return
                 state = json.loads(current['data'])
                 stage = 'reconcile'
                 try:
                     reconcile(db, c, current, state, now)
+                    # Commit new confirmed fills to the transaction before calculating reservations.
+                    db.execute('UPDATE portfolios SET data=? WHERE market=? AND strategy=?',(json.dumps(state),market,strategy))
                     stage = 'account'
                     holdings, sellable, reserved = account(c, market)
                     for key, p in state['positions'].items():
                         if holdings.get(p['code'], 0) != p['quantity']:
                             raise RuntimeError('ownership_mismatch')
-                    actual_positions = json.loads(json.dumps(state['positions']))
-                    realized = state['realized_pnl']
-                    signals = step(state, scan, quotes, now, market, row['strategy'])
-                    state['realized_pnl'] = realized
                     # Signals are proposals. Ownership changes only in reconcile after verified fills.
-                    state['positions'] = actual_positions
+                    signals = propose(state, scan, quotes, now, market, row['strategy'])
+                    actual_positions = state['positions']
                     for failed in db.execute("SELECT i.payload,f.data FROM intents i LEFT JOIN intent_failures f ON f.intent_id=i.id WHERE i.market=? AND i.strategy=? AND i.status='failed' ORDER BY i.id DESC LIMIT 3", (market,row['strategy'])):
                         payload = json.loads(failed[0])
                         failure = json.loads(failed[1]) if failed[1] else {}
                         if failure.get('kind') == 'not_submitted_confirmed':
                             continue
                         state['issues'].append(payload['code'] + ': ' + failure.get('message','증권사 주문 거절') + ' · 실패 내역 확인 필요 (자동 재전송 없음)')
-                    pending = db.execute("SELECT payload,applied FROM intents WHERE market=? AND status IN ('accepted','partial','unknown','reconcile_error')", (market,)).fetchall()
-                    pending_orders = [dict(json.loads(x['payload']), applied=x['applied']) for x in pending]
+                    pending = db.execute("SELECT payload,applied,strategy FROM intents WHERE market=? AND status IN ('accepted','partial','unknown','reconcile_error')", (market,)).fetchall()
+                    pending_orders = [dict(json.loads(x['payload']), applied=x['applied'], strategy=x['strategy']) for x in pending]
                     blocked = reserved | {x['code'] for x in pending_orders}
-                    used = sum(Decimal(str(p['entry_price']))*p['quantity'] for p in actual_positions.values()) + sum(Decimal(x['price'])*(int(x['quantity'])-x['applied'])*Decimal('1.01') for x in pending_orders if x['side']=='buy')
-                    slots = len(set(actual_positions) | {x['exchange']+':'+x['code'] for x in pending_orders if x['side']=='buy'})
+                    account_used, owned_slots = budgets.exposure(db,market)
+                    own_used, own_slots = budgets.exposure(db,market,strategy)
+                    used = own_used
+                    market_cap = Decimal(db.execute('SELECT total_cap FROM market_budgets WHERE market=?',(market,)).fetchone()[0])
+                    slots = len(set(actual_positions) | {x['exchange']+':'+x['code'] for x in pending_orders if x['side']=='buy' and x['strategy']==strategy})
+                    market_unknown = db.execute("SELECT count(*) FROM intents WHERE market=? AND status IN ('unknown','reconcile_error')",(market,)).fetchone()[0]
                     stage = 'proposal'
                     for event in signals:
                         price = Decimal(str(event['reference_price']))
@@ -410,7 +447,7 @@ def cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, scree
                                 if event['kind'] == 'BUY':
                                     state['seen'].pop(event.get('signal_date','') + ':' + event['exchange'] + ':' + event['code'], None)
                                 continue
-                        quantity = buy_quantity(market, price, quotes.get(event['exchange']+':'+event['code'], {}).get('base_exrt')) if event['kind'] == 'BUY' else actual_positions.get(event['exchange']+':'+event['code'], {}).get('quantity', 0)
+                        quantity = buy_quantity(market, price, quotes.get(event['exchange']+':'+event['code'], {}).get('base_exrt'), REAL_RULES) if event['kind'] == 'BUY' else actual_positions.get(event['exchange']+':'+event['code'], {}).get('quantity', 0)
                         if quantity <= 0:
                             continue
                         order = trade.normalize_order(dict(mode='real',market=market,side=event['kind'].lower(),code=event['code'],exchange=event['exchange'],quantity=str(quantity),price=format(price.quantize(Decimal('.0001')) if market == 'US' else price.quantize(Decimal('1')),'f')))
@@ -420,9 +457,11 @@ def cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, scree
                         if order['code'] in blocked:
                             state['issues'].append(order['code']+': 미체결 주문 확인 대기'); continue
                         if order['side']=='buy':
-                            if holdings.get(order['code'],0):
+                            if market_unknown:
+                                state['issues'].append(order['code']+': 시장 미확인 주문 점검 대기'); continue
+                            if holdings.get(order['code'],0) or order['exchange']+':'+order['code'] in owned_slots:
                                 state['issues'].append(order['code']+': 기존 계좌 보유로 매수 제외'); continue
-                            if slots >= 5 or used+price*quantity*Decimal('1.01') > Decimal(row['budget']):
+                            if slots >= REAL_RULES['max_positions'] or used+price*quantity*Decimal('1.01') > Decimal(current['budget']) or account_used+price*quantity*Decimal('1.01') > market_cap:
                                 state['issues'].append(order['code']+': 예산·최대 보유 한도로 매수 제외'); continue
                             if not can_buy(c, order):
                                 state['issues'].append(order['code']+': 주문가능 현금 부족'); continue
@@ -435,7 +474,7 @@ def cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, scree
                         if not cur.rowcount:
                             continue
                         # Durable intent and state BEFORE the network call; a crash cannot resend.
-                        db.execute('UPDATE portfolios SET data=? WHERE market=?', (json.dumps(state),market))
+                        db.execute('UPDATE portfolios SET data=? WHERE market=? AND strategy=?', (json.dumps(state),market,strategy))
                         db.commit()
                         stage = 'submit'
                         diagnostic = None
@@ -451,16 +490,17 @@ def cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, scree
                             diagnostic = dict(stage=stage, kind='unknown', message='주문번호 또는 응답 형식 확인 불가')
                         if diagnostic:
                             db.execute('INSERT OR REPLACE INTO intent_failures VALUES (?,?)', (cur.lastrowid,json.dumps(diagnostic)))
-                            print(json.dumps(dict(event='auto_order_failure', market=market, intent_id=cur.lastrowid, **diagnostic), ensure_ascii=False), flush=True)
+                            print(json.dumps(dict(event='auto_order_failure', market=market, strategy=strategy, intent_id=cur.lastrowid, **diagnostic), ensure_ascii=False), flush=True)
                         if status_ == 'failed':
                             state['issues'].append(order['code'] + ': 증권사 주문 거절 · 실패 내역 확인 필요')
                         db.execute('UPDATE intents SET status=?,number=?,updated=? WHERE id=?', (status_,order_no,stamp(now),cur.lastrowid))
                         db.commit()
+                        db.execute('BEGIN IMMEDIATE')
                         blocked.add(order['code'])
                         if status_ == 'unknown':
                             raise RuntimeError('unknown_order')
                         if order['side']=='buy' and status_=='accepted':
-                            used += price*quantity*Decimal('1.01'); slots += 1
+                            used += price*quantity*Decimal('1.01'); account_used += price*quantity*Decimal('1.01'); slots += 1
                     state['status'] = 'monitoring'
                 except Exception as error:
                     diagnostic = dict(stage=stage, error_type=type(error).__name__)
@@ -469,18 +509,57 @@ def cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, scree
                         diagnostic['reason'] = str(error)
                     state.pop('restart_check',None)
                     state['last_failure'] = diagnostic
-                    print(json.dumps(dict(event='auto_trading_stopped',market=market,**diagnostic)),flush=True)
+                    print(json.dumps(dict(event='auto_trading_stopped',market=market,strategy=strategy,**diagnostic)),flush=True)
                     # Stop new sends on any unverified ownership/order/account state.
                     state.update(status='attention',last_check=stamp(now),issues=[f'계좌·주문 결과 확인이 필요해 자동매매를 중지했습니다. 실패 단계: {stage} · 체결·미체결 내역을 확인하세요.'])
-                    db.execute('UPDATE portfolios SET enabled=0,revision=revision+1 WHERE market=?',(market,))
-                db.execute('UPDATE portfolios SET data=? WHERE market=?',(json.dumps(state,ensure_ascii=False,allow_nan=False),market))
+                    db.execute('UPDATE portfolios SET enabled=0,revision=revision+1 WHERE market=? AND strategy=?',(market,strategy))
+                db.execute('UPDATE portfolios SET data=? WHERE market=? AND strategy=?',(json.dumps(state,ensure_ascii=False,allow_nan=False),market,strategy))
     except Exception as error:
-        print(json.dumps(dict(event='auto_trading_read_failed',market=market,error_type=type(error).__name__)),flush=True)
+        print(json.dumps(dict(event='auto_trading_read_failed',market=market,strategy=strategy,error_type=type(error).__name__)),flush=True)
         with connect(path) as db:
-            current=db.execute('SELECT data FROM portfolios WHERE market=?',(market,)).fetchone()
+            current=db.execute('SELECT data FROM portfolios WHERE market=? AND strategy=?',(market,strategy)).fetchone()
             state=json.loads(current[0]);state.update(status='error',last_check=stamp(now),issues=['전략·인증 조회 실패 · 주문 전송 없이 다음 주기에 재시도'])
-            db.execute('UPDATE portfolios SET data=? WHERE market=? AND revision=?',(json.dumps(state),market,revision))
+            db.execute('UPDATE portfolios SET data=? WHERE market=? AND strategy=? AND revision=?',(json.dumps(state),market,strategy,revision))
 
+
+
+def reconcile_stopped(market, strategy, path, control_path, now, client_fn, allow_enabled=False):
+    """A stop prevents new orders, but fills of already accepted orders still belong here."""
+    with locked(control_path):
+        with connect(path) as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT * FROM portfolios WHERE market=? AND strategy=?',(market,strategy)).fetchone()
+            if row['enabled'] and not allow_enabled:
+                return
+            pending=db.execute("SELECT count(*) FROM intents WHERE market=? AND strategy=? AND status IN ('accepted','partial','unknown','reconcile_error')",(market,strategy)).fetchone()[0]
+            if not pending:
+                return
+            state=json.loads(row['data'])
+            try:
+                c=(client_fn or trade.client)('real')
+                reconcile(db,c,row,state,now)
+                holdings,_,_=account(c,market)
+                if any(holdings.get(p['code'],0)!=p['quantity'] for p in state['positions'].values()):
+                    raise RuntimeError('ownership_mismatch')
+                state.update(status='paused' if row['enabled'] else 'stopped',last_check=stamp(now),issues=[])
+            except Exception as error:
+                state.update(status='attention',last_check=stamp(now),issues=['중지 전략의 기존 주문·체결 확인 필요 · 신규 주문 없음'])
+                state['last_failure']=dict(stage='reconcile',error_type=type(error).__name__,reason=str(error) if str(error) in ('unknown_order','unverified_order','ownership_mismatch','duplicate_fill','unowned_sale','order_quantity_mismatch','order_stock_mismatch') else 'read_failed')
+            db.execute('UPDATE portfolios SET data=? WHERE market=? AND strategy=?',(json.dumps(state),market,strategy))
+
+
+def cycle(market, path=DB, control_path=CONTROL, now=None, client_fn=None, screen_fn=None, quote_fn=None, strategy=None):
+    with locked(control_path) as gate:
+        global_enabled=read(gate)['enabled']
+    with connect(path) as db:
+        choices=[(r[0],r[1]) for r in db.execute('SELECT strategy,enabled FROM portfolios WHERE market=? ORDER BY strategy',(market,))]
+    if strategy is not None:
+        validate(market,strategy);choices=[x for x in choices if x[0]==strategy]
+    for choice,enabled in choices:
+        if enabled and global_enabled:
+            _cycle(market,path,control_path,now,client_fn,screen_fn,quote_fn,choice)
+        else:
+            reconcile_stopped(market,choice,path,control_path,now or dt.datetime.now(dt.timezone.utc),client_fn,allow_enabled=not global_enabled)
 
 def worker():
     import fcntl

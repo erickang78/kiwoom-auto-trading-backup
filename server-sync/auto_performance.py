@@ -36,6 +36,6 @@ def cumulative(db, market, strategy, positions):
                 raise ValueError('보유 평가 가격 확인이 필요합니다.')
             unrealized += (last-entry['price'])*entry['quantity']
         total = realized+unrealized
-        return dict(available=True,costs_included=False,cumulative_buy_amount=float(buys),realized_pnl=float(realized),unrealized_pnl=float(unrealized),total_pnl=float(total),return_pct=float(total/buys*100) if buys else None,win_rate_pct=wins/closed*100 if closed else None,closed_trades=closed)
+        return dict(available=True,costs_included=False,holding_cost=float(sum((v['price']*v['quantity'] for v in held.values()),Decimal(0))),winning_trades=wins,cumulative_buy_amount=float(buys),realized_pnl=float(realized),unrealized_pnl=float(unrealized),total_pnl=float(total),return_pct=float(total/buys*100) if buys else None,win_rate_pct=wins/closed*100 if closed else None,closed_trades=closed)
     except (ValueError,KeyError,TypeError,ArithmeticError):
         return dict(available=False,costs_included=False,reason='실제 체결·보유 기록을 확인한 뒤 성과를 계산합니다.')

@@ -78,7 +78,7 @@ def public_snapshot(mode):
             }
             gold_fields = (
                 'ord_no orig_ord_no stk_cd stk_nm io_tp_nm trde_tp ord_qty '
-                'ord_uv cntr_qty cntr_uv ord_remnq mdfy_cncl_tp data_send_end_tp ord_tm cnfm_tm'
+                'ord_uv cntr_qty cntr_uv ord_remnq mdfy_cncl_tp data_send_end_tp ord_tm cnfm_tm ord_dt'
             )
             pending_body = {
             'ord_dt': order_date, 'qry_tp': '2', 'mrkt_deal_tp': '5',
@@ -90,7 +90,7 @@ def public_snapshot(mode):
                 if not isinstance(rows, list):
                     raise broker.BrokerError('Unexpected gold pending-order schema')
                 gold['pending_orders'].extend(
-                    {**broker.pick(row, gold_fields), 'ord_dt': order_date}
+                    broker.pick(row, gold_fields)
                     for row in rows if int(row.get('ord_remnq') or '0') > 0
                 )
             fills_body = {
@@ -103,7 +103,7 @@ def public_snapshot(mode):
                 if not isinstance(rows, list):
                     raise broker.BrokerError('Unexpected gold execution schema')
                 gold['executions'].extend(
-                    {**broker.pick(row, gold_fields), 'ord_dt': order_date}
+                    broker.pick(row, gold_fields)
                     for row in rows if int(row.get('cntr_qty') or '0') > 0
                 )
         except broker.BrokerError:
