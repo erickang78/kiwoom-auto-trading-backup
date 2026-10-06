@@ -397,6 +397,19 @@ function actualBuyReturn(x,d){
  // Status exposes at most 30 orders; prove truncated windows per current symbol cycle.
  if(!Array.isArray(d.orders))return unknown;
  if(d.orders.length>=30){
+  // All IDs after a displayed buy are present even when the older prefix is truncated.
+  // Prove closure before consulting today's position, which may belong to a rebuy.
+  const sameSymbol=d.orders.filter(o=>o.market===market&&o.strategy===selected&&sameBuySymbol(o.order,x.order));
+  let closedRemaining=Number(x.filled),closedProof=Number.isSafeInteger(Number(x.id))&&Number.isInteger(closedRemaining)&&closedRemaining>0&&Number(x.applied??x.filled)===closedRemaining&&!['unknown','reconcile_error'].includes(x.status)&&Number(x.average)>0;
+  for(const o of sameSymbol.filter(o=>Number(o.id)>Number(x.id)).sort((a,b)=>Number(a.id)-Number(b.id))){
+   const filled=Number(o.filled);
+   if(!closedProof||!Number.isSafeInteger(Number(o.id))||['unknown','reconcile_error'].includes(o.status)||!Number.isInteger(filled)||filled<0||Number(o.applied??o.filled)!==filled){closedProof=false;break;}
+   if(!filled)continue;
+   if(o.order.side!=='sell'||Number(o.average)<=0){closedProof=false;break;}
+   closedRemaining-=filled;
+   if(closedRemaining<0){closedProof=false;break;}
+   if(closedRemaining===0)return {sold:true};
+  }
   // A truncated all-symbol window still contains the complete suffix of a recent buy.
   // Prove that exact current cycle from its unique entry-time anchor, not older history.
   const positions=(d.positions||[]).filter(p=>p.strategy===selected&&sameBuySymbol(p,x.order));

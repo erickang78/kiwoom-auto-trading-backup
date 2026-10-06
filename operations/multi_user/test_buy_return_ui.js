@@ -26,7 +26,7 @@ assert.equal(c.actualBuyReturn(order,{...snapshot,orders:Array(30).fill(order)})
 const unrelated=Array.from({length:29},(_,i)=>({...order,id:100+i,order:{...order.order,code:'OTHER'+i}}));
 const truncated={...snapshot,orders:[order,...unrelated]};
 assert.match(c.buyReturnBadge(c.actualBuyReturn(order,truncated)),/\+2.15%/,'30-row all-symbol window proves exact recent buy');
-assert.equal(c.actualBuyReturn(order,{...truncated,orders:[order,sell,...unrelated]}).pct,null,'closed old cycle cannot borrow current position');
+assert.equal(c.actualBuyReturn(order,{...truncated,orders:[order,sell,...unrelated]}).sold,true,'closed old cycle is proven without older prefix');
 assert.equal(c.actualBuyReturn(order,{...truncated,orders:[order,rebuy,...unrelated]}).pct,null,'newer confirmed buy invalidates old anchor');
 assert.equal(c.actualBuyReturn(order,{...truncated,orders:[order,{...sell,status:'unknown',filled:0},...unrelated]}).pct,null);
 assert.equal(c.actualBuyReturn(order,{...truncated,orders:[order,{...sell,filled:1},...unrelated],positions:[{...snapshot.positions[0],quantity:1}]}).pct>0,true,'partial sell suffix proof');
@@ -44,3 +44,16 @@ virtual([position]);c.renderEvents();assert.match(nodes.events.innerHTML,/<div c
 c.tradeType='real';c.snapshot=snapshot;vm.runInContext("actualSnapshots.set('KR:breakout',snapshot)",c);c.renderEvents();assert.match(nodes.events.innerHTML,/<div class="signal-event-heading">.*현재 수익률 \+2.15%/);
 assert.match(moduleSource,/timer=setTimeout\(\(\)=>load\(\),15000\)/);
 console.log('Buy current-return UI PASS: positive/negative/zero, cycles, scope, missing quotes, partial fills, always-visible headings');
+
+const closedWindow={...truncated,positions:[],orders:[order,sell,...unrelated]};
+assert.equal(c.actualBuyReturn(order,closedWindow).sold,true,'closed buy needs no current position');
+assert.equal(c.actualBuyReturn(order,{...closedWindow,orders:[order,{...sell,filled:1,applied:1},{...sell,id:3,filled:1,applied:1},...unrelated]}).sold,true,'two partial sells close exactly');
+assert.equal(c.actualBuyReturn(order,{...closedWindow,orders:[order,{...sell,filled:1},...unrelated]}).pct,null,'partial sale alone is not closure');
+assert.equal(c.actualBuyReturn(order,{...closedWindow,orders:[order,sell,rebuy,...unrelated]}).sold,true,'later rebuy cannot change proven past closure');
+assert.equal(c.actualBuyReturn(order,{...closedWindow,orders:[order,rebuy,sell,...unrelated]}).sold,true);
+assert.equal(c.actualBuyReturn(order,{...closedWindow,orders:[order,{...rebuy,id:2},{...sell,id:3},...unrelated]}).pct,null,'intervening buy blocks closure proof');
+assert.equal(c.actualBuyReturn(order,{...closedWindow,orders:[order,{...sell,status:'reconcile_error'},...unrelated]}).pct,null);
+assert.equal(c.actualBuyReturn(order,{...closedWindow,orders:[order,{...sell,filled:3},...unrelated]}).pct,null,'over-sale cannot prove closure');
+assert.equal(c.actualBuyReturn(order,{...closedWindow,orders:[order,{...sell,strategy:'trend'},...unrelated]}).pct,null,'other strategy sale cannot close');
+assert.equal(c.actualBuyReturn(order,{...closedWindow,orders:[order,{...sell,market:'US'},...unrelated]}).pct,null,'other market sale cannot close');
+console.log('Truncated-window historical closure PASS');
