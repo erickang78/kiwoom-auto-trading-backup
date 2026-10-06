@@ -1,0 +1,37 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const page=fs.readFileSync('server-baseline/dashboard/dist/index.html','utf8');
+const moduleSource=page.split('<script id="signal-validation-module">')[1].split('</script>')[0];
+const source=moduleSource.slice(moduleSource.indexOf('// Current-return badges'),moduleSource.indexOf('const actualSnapshots=new Map();'));
+const c={market:'KR',selected:'breakout',when:v=>String(v)};vm.createContext(c);vm.runInContext(source,c);
+const time='2026-10-06T01:00:00Z',later='2026-10-06T02:00:00Z';
+const buy={kind:'BUY',market:'KR',strategy:'breakout',code:'SYN',exchange:'KRX',entry_at:time,reference_price:100,at:time,name:'synthetic'};
+const position={...buy,entry_price:100,quantity:2,last_price:102.15,last_at:later};
+function virtual(positions,events=[buy]){c.snapshot={market:'KR',strategy:'breakout',positions,events};vm.runInContext('virtualSnapshot=snapshot',c);}
+virtual([position]);assert.match(c.buyReturnBadge(c.virtualBuyReturn(buy)),/현재 수익률 \+2.15%/);
+virtual([{...position,last_price:98.77}]);assert.match(c.buyReturnBadge(c.virtualBuyReturn(buy)),/signal-exit-loss.*-1.23%/);
+virtual([{...position,last_price:100}]);assert.match(c.buyReturnBadge(c.virtualBuyReturn(buy)),/signal-exit-other.*0.00%/);
+virtual([{...position,entry_at:later}],[buy,{...buy,kind:'SELL'}]);assert.equal(c.virtualBuyReturn(buy).sold,true);
+virtual([{...position,last_price:null}]);assert.equal(c.virtualBuyReturn(buy).pct,null);
+virtual([{...position,last_at:null}]);assert.equal(c.virtualBuyReturn(buy).pct,null);
+virtual([position]);assert.equal(c.virtualBuyReturn({...buy,strategy:'trend'}).pct,null);assert.equal(c.virtualBuyReturn({...buy,market:'US'}).pct,null);assert.equal(c.virtualBuyReturn({...buy,exchange:'OTHER'}).pct,null);assert.equal(c.virtualBuyReturn({...buy,kind:'SKIP'}),null);
+const order={id:1,market:'KR',strategy:'breakout',created:time,updated:later,filled:2,average:'100',status:'partial',order:{side:'buy',code:'SYN',exchange:'KRX',quantity:4,name:'synthetic'}};
+const snapshot={market:'KR',selected_strategy:'breakout',positions:[{...position,entry_at:'2026-10-06T01:05:00Z'}],orders:[order]};
+assert.match(c.buyReturnBadge(c.actualBuyReturn(order,snapshot)),/\+2.15%/,'partial confirmed average basis');
+const sell={...order,id:2,filled:2,order:{...order.order,side:'sell'}},rebuy={...order,id:3,created:later,updated:'2026-10-06T03:00:00Z'};
+const recycled={...snapshot,orders:[order,sell,rebuy],positions:[{...position,entry_at:later}]};
+assert.equal(c.actualBuyReturn(order,recycled).sold,true);assert.equal(c.actualBuyReturn(rebuy,recycled).pct>0,true);
+assert.equal(c.actualBuyReturn(order,{...snapshot,positions:[{...position,entry_at:'2026-10-06T00:00:00Z'}]}).pct,null);
+assert.equal(c.actualBuyReturn(order,{...snapshot,positions:[{...position,entry_at:later,entry_price:101}]}).pct,null);
+assert.equal(c.actualBuyReturn(order,{...snapshot,orders:Array(30).fill(order)}).pct,null);
+assert.equal(c.actualBuyReturn({...order,market:'US'},snapshot).pct,null);assert.equal(c.actualBuyReturn({...order,strategy:'trend'},snapshot).pct,null);
+assert.equal(c.actualBuyReturn(order,{...snapshot,positions:[{...position,last_price:null}]}).pct,null);
+assert.equal(c.actualBuyReturn(order,{...snapshot,positions:[{...position,quantity:1,entry_at:later}],orders:[order,{...sell,filled:1}]}).pct>0,true,'partial sell retains current cycle');
+// Render real and virtual buy headings with details OFF, without any requests.
+const nodes={};c.el=id=>nodes[id]||(nodes[id]={setAttribute(){},textContent:'',innerHTML:''});c.panel={dataset:{signalDetails:'false'},querySelectorAll:()=>[]};
+Object.assign(c,{tradeType:'virtual',eventSide:'BUY',eventRecords:[buy],executionRecords:[],esc:v=>String(v),money:v=>String(v),pct:v=>String(v),virtualReturn:()=>null,actualFor:()=>null,actualCard:()=>''});
+vm.runInContext('const actualSnapshots=new Map();',c);
+vm.runInContext(moduleSource.slice(moduleSource.indexOf('function renderActualOrders()'),moduleSource.indexOf("el('details').addEventListener")),c);
+virtual([position]);c.renderEvents();assert.match(nodes.events.innerHTML,/<div class="signal-event-heading">.*현재 수익률 \+2.15%.*<strong>/);assert.match(nodes.events.innerHTML,/가격 확인.*수수료·세금 제외/);
+c.tradeType='real';c.snapshot=snapshot;vm.runInContext("actualSnapshots.set('KR:breakout',snapshot)",c);c.renderEvents();assert.match(nodes.events.innerHTML,/<div class="signal-event-heading">.*현재 수익률 \+2.15%/);
+assert.match(moduleSource,/timer=setTimeout\(\(\)=>load\(\),15000\)/);
+console.log('Buy current-return UI PASS: positive/negative/zero, cycles, scope, missing quotes, partial fills, always-visible headings');

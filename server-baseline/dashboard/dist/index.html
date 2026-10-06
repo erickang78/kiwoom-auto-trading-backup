@@ -343,7 +343,7 @@ function render(d){
  const metrics=[[periodLabel()+' 검증수익률',pct(perf.return_pct)],['실현 + 평가손익',money(perf.total_pnl)],[days===null?'누적 매수금액':'기간 기준금액',money(perf.cumulative_buy_amount)],['실현손익',money(perf.realized_pnl)],['평가손익',money(perf.unrealized_pnl)],['승률 / 청산 횟수',pct(perf.win_rate_pct)+' / '+(perf.closed_trades??'—')+'건']];
  el('summary').innerHTML=metrics.map(([label,value])=>`<div class="signal-metric">${label}<strong>${value}</strong></div>`).join('');
  el('positions').innerHTML=`<p class="muted">${d.positions.length} / 5종목 보유</p>`+(d.positions.length?d.positions.map(p=>`<div class="signal-row"><strong>${esc(p.name)} (${esc(p.code)}) · ${p.quantity}주</strong><small>매수가 ${money(p.entry_price)} → 마지막 확인 ${money(p.last_price)} · ${pct(p.return_pct)}</small><small>익절 ${money(p.entry_price*1.05)} / 손절 ${money(p.entry_price*.97)}</small><small>가격 확인 ${when(p.last_at)} (한국시간)</small></div>`).join(''):'<p class="signal-empty">아직 가상 보유 종목이 없습니다. 장중 조건과 시세 갱신을 확인하면 자동으로 기록합니다.</p>');
- eventRecords=d.events;executionRecords=Array.isArray(d.executions)?d.executions:[];renderEvents();
+ virtualSnapshot={market:d.market||market,strategy:d.strategy||selected,positions:d.positions||[],events:d.events||[]};eventRecords=d.events;executionRecords=Array.isArray(d.executions)?d.executions:[];renderEvents();
  el('issues').innerHTML=(d.issues||[]).map(i=>'<div>'+esc(i)+'</div>').join('');
 }
 // Execution records are explicit, real-account aggregates for one original signal.
@@ -376,16 +376,58 @@ function actualCard(e,x){
  const vr=virtualReturn(e), gap=net!==null&&vr!==null?net-vr:null;
  return `<section class="signal-result signal-result-real"><span class="signal-type-badge">실제매매</span><strong>${state}</strong><small>${esc(x?.reason||(x?'사유 기록 없음':'신호에 연결된 실제 주문·체결 기록이 없습니다. 잔고 부족·미체결 여부는 확인할 수 없습니다.'))}</small><small>체결 ${filled?esc(x.filled_quantity)+'주':'—'} · 평균 체결가 ${money(price)}</small><small>기준가 대비 ${money(diff)}${diff!==null?' ('+pct(diff/e.reference_price*100)+')':''} · 첫 체결 지연 ${Number.isFinite(delay)&&delay>=0?delay.toFixed(1)+'초':'—'}</small><small>수수료 ${money(finite(x?.fee)?x.fee:null)} · 세금 ${money(finite(x?.tax)?x.tax:null)} · 기타 비용 ${money(finite(x?.other_cost)?x.other_cost:null)}</small><small>비용 반영 수익률 <b>${pct(net)}</b> · 가상 대비 ${gap===null?'—':gap.toFixed(2)+'%p'}</small>${net===null?'<small>매도 체결과 매수·매도 비용이 모두 확인된 경우 계산합니다.</small>':''}</section>`;
 }
+// Current-return badges use existing snapshots only; never fetch quotes or trade.
+let virtualSnapshot=null;
+function sameBuySymbol(a,b){return a?.code===b?.code&&a?.exchange===b?.exchange;}
+function inBuyScope(x){return (!x.market||x.market===market)&&(!x.strategy||x.strategy===selected);}
+function currentBuyReturn(position,price){const last=Number(position?.last_price),buy=Number(price);return position?.last_at&&last>0&&buy>0&&Number.isFinite(last)&&Number.isFinite(buy)?{pct:(last/buy-1)*100,at:position.last_at}:{pct:null};}
+function virtualBuyReturn(e){
+ if(e.kind!=='BUY')return null;
+ if(!virtualSnapshot||virtualSnapshot.market!==market||virtualSnapshot.strategy!==selected||!inBuyScope(e)||!e.entry_at)return {pct:null};
+ const same=x=>inBuyScope(x)&&sameBuySymbol(x,e)&&x.entry_at===e.entry_at;
+ const positions=virtualSnapshot.positions.filter(same);
+ if(positions.length===1)return currentBuyReturn(positions[0],e.reference_price);
+ if(!positions.length&&virtualSnapshot.events.some(x=>x.kind==='SELL'&&same(x)))return {sold:true};
+ return {pct:null};
+}
+function actualBuyReturn(x,d){
+ if(x.order?.side!=='buy')return null;
+ const unknown={pct:null};
+ if(!d||d.market!==market||d.selected_strategy!==selected||x.market!==market||x.strategy!==selected)return unknown;
+ // Status exposes at most 30 orders. A full 30-row window cannot prove a complete cycle.
+ if(!Array.isArray(d.orders)||d.orders.length>=30)return unknown;
+ const ledger=d.orders.filter(o=>o.market===market&&o.strategy===selected&&sameBuySymbol(o.order,x.order)&&Number(o.filled)>0).sort((a,b)=>Number(a.id)-Number(b.id));
+ let quantity=0,cycle=[],closed=new Set();
+ for(const o of ledger){const filled=Number(o.filled);if(!Number.isInteger(filled)||filled<=0)return unknown;
+  if(o.order.side==='buy'){if(quantity!==0)return unknown;cycle=[o];quantity+=filled;}
+  else if(o.order.side==='sell'){quantity-=filled;if(quantity<0)return unknown;if(quantity===0){for(const buy of cycle)closed.add(buy.id);cycle=[];}}
+  else return unknown;
+ }
+ if(closed.has(x.id))return {sold:true};
+ if(cycle.length!==1||cycle[0].id!==x.id||quantity<=0)return unknown;
+ const positions=(d.positions||[]).filter(p=>p.strategy===selected&&sameBuySymbol(p,x.order));
+ if(positions.length!==1)return unknown;
+ const p=positions[0],entry=Date.parse(p.entry_at),created=Date.parse(x.created),updated=Date.parse(x.updated);
+ if(!Number.isFinite(entry)||!Number.isFinite(created)||!Number.isFinite(updated)||entry<created||entry>updated||Number(p.quantity)!==quantity||Number(p.entry_price)!==Number(x.average))return unknown;
+ return currentBuyReturn(p,x.average);
+}
+function buyReturnBadge(value){
+ if(value===null)return '';
+ const valid=Number.isFinite(value.pct),sign=valid?(value.pct>0?'profit':value.pct<0?'loss':'other'):'other';
+ const label=value.sold?'매도 완료':valid?'현재 수익률 '+(value.pct>0?'+':'')+value.pct.toFixed(2)+'%':'현재 수익률 —';
+ return `<span class="signal-exit-badge signal-exit-${sign} signal-current-return" title="수수료·세금 제외 · 마지막 확인 시세 기준">${label}</span>${valid?`<small class="signal-current-price-at">가격 확인 ${when(value.at)} (한국시간) · 수수료·세금 제외</small>`:''}`;
+}
+
 const actualSnapshots=new Map();
 document.addEventListener('moa:real-orders',e=>{const d=e.detail;if(!d?.market||!d.selected_strategy)return;actualSnapshots.set(d.market+':'+d.selected_strategy,d);if(tradeType==='real')renderEvents();});
 function renderActualOrders(){
  const d=actualSnapshots.get(market+':'+selected);
  const records=d?(d.orders||[]).filter(x=>x.market===market&&x.strategy===selected&&Number(x.filled)>0&&['buy','sell'].includes(x.order?.side)):null;
  panel.querySelectorAll('[data-signal-event]').forEach(b=>{const side=b.dataset.signalEvent==='SELL'?'sell':'buy';b.textContent=(side==='sell'?'매도':'매수')+(records?' · '+records.filter(x=>x.order.side===side).length+'건':' · 조회 중');});
- el('comparison-note').textContent='선택한 시장·전략의 실제 자동매매 체결기록입니다. 최근 시장 주문 30개 중 체결 수량이 있는 주문만 집계합니다. 부분체결은 주문당 1건이며 미체결·주문 실패·수동 주문은 제외됩니다.';
+ el('comparison-note').textContent='선택한 시장·전략의 실제 자동매매 체결기록입니다. 최근 시장 주문 30개 중 체결 수량이 있는 주문만 집계합니다. 부분체결은 주문당 1건이며 미체결·주문 실패·수동 주문은 제외됩니다.'+(eventSide==='SELL'?' 매도 손익은 실제 체결된 수량 기준이며 수수료·세금 제외입니다.':'');
  if(!records){el('events').textContent='실제 체결내역을 조회하고 있습니다…';return;}
  const side=eventSide==='SELL'?'sell':'buy',visible=records.filter(x=>x.order.side===side);
- el('events').innerHTML=visible.length?visible.map(x=>{const o=x.order,quantity=Number(x.filled),price=Number(x.average),filled=quantity>=Number(o.quantity),currency=market==='KR'?'원':' USD';const reason=String(o.reason||''),exit=side==='sell'?(reason.startsWith('익절')?['profit','익절']:reason.startsWith('손절')?['loss','손절']:['other',reason?'기타 매도':'사유 미기록']):null;const badge=exit?`<span class="signal-exit-badge signal-exit-${exit[0]}">${exit[1]}</span>`:'';return `<article class="signal-row"><div class="signal-event-heading">${badge}<strong>${esc(o.name||o.code)} (${esc(o.code)}) · 실제 ${side==='sell'?'매도':'매수'}</strong></div><small>주문 ${when(x.created)} (한국시간) · 마지막 확인 ${when(x.updated)} (한국시간)</small><section class="signal-result signal-result-real"><span class="signal-type-badge">실제매매</span><strong>${filled?'체결 완료':'부분 체결'}</strong><small>체결 ${quantity.toLocaleString('ko-KR')}주 · 평균 체결가 ${Number.isFinite(price)&&price>0?price.toLocaleString('ko-KR',{maximumFractionDigits:4})+currency:'—'}</small><small>주문번호 ${esc(x.number||'미확인')} · ${esc(o.exchange||'')}</small><small>${esc(o.reason||'실제 자동매매 주문')}</small></section></article>`;}).join(''):`<p class="signal-empty">선택한 시장·전략에 기록된 실제 ${side==='sell'?'매도':'매수'} 체결이 없습니다.</p>`;
+ el('events').innerHTML=visible.length?visible.map(x=>{const o=x.order,quantity=Number(x.filled),price=Number(x.average),filled=quantity>=Number(o.quantity),currency=market==='KR'?'원':' USD';const reason=String(o.reason||''),exit=side==='sell'?(reason.startsWith('익절')?['profit','익절']:reason.startsWith('손절')?['loss','손절']:['other',reason?'기타 매도':'사유 미기록']):null;const badge=exit?`<span class="signal-exit-badge signal-exit-${exit[0]}">${exit[1]} ${x.sale_profit?.available===true&&Number.isFinite(x.sale_profit.amount)?(x.sale_profit.amount>0?'+':'')+Number(x.sale_profit.amount).toLocaleString('ko-KR',{maximumFractionDigits:market==='KR'?0:2})+currency:'손익 확인 불가'}</span>`:'';return `<article class="signal-row"><div class="signal-event-heading">${badge}${side==='buy'?buyReturnBadge(actualBuyReturn(x,d)):''}<strong>${esc(o.name||o.code)} (${esc(o.code)}) · 실제 ${side==='sell'?'매도':'매수'}</strong></div><small>주문 ${when(x.created)} (한국시간) · 마지막 확인 ${when(x.updated)} (한국시간)</small><section class="signal-result signal-result-real"><span class="signal-type-badge">실제매매</span><strong>${filled?'체결 완료':'부분 체결'}</strong><small>체결 ${quantity.toLocaleString('ko-KR')}주 · 평균 체결가 ${Number.isFinite(price)&&price>0?price.toLocaleString('ko-KR',{maximumFractionDigits:4})+currency:'—'}</small><small>주문번호 ${esc(x.number||'미확인')} · ${esc(o.exchange||'')}</small><small>${esc(o.reason||'실제 자동매매 주문')}</small></section></article>`;}).join(''):`<p class="signal-empty">선택한 시장·전략에 기록된 실제 ${side==='sell'?'매도':'매수'} 체결이 없습니다.</p>`;
 }
 function renderEvents(){
  panel.dataset.signalTradeType=tradeType;
@@ -400,9 +442,9 @@ function renderEvents(){
  const records=eventRecords.filter(e=>(eventSide==='SELL'?e.kind==='SELL':e.kind==='BUY'||e.kind==='SKIP')&&(tradeType!=='real'||actualFor(e)));
  el('events').innerHTML=records.length?records.map(e=>{
   const exit=e.kind==='SELL'?(String(e.reason||'').includes('익절')?['profit','익절']:String(e.reason||'').includes('손절')?['loss','손절']:['other','기타 매도']):null;
-  const badge=exit?`<span class="signal-exit-badge signal-exit-${exit[0]}">${exit[1]}</span>`:'';
+  const badge=exit?`<span class="signal-exit-badge signal-exit-${exit[0]}">${exit[1]} ${Number.isFinite(e.pnl)?(e.pnl>0?'+':'')+e.pnl.toLocaleString('ko-KR',{maximumFractionDigits:market==='KR'?0:2})+(market==='KR'?'원':' USD'):'손익 확인 불가'}</span>`:'';
   const virtual=`<section class="signal-result"><span class="signal-type-badge">가상매매</span><strong>${({BUY:'가상 매수',SELL:'가상 매도',SKIP:'매수 제외'})[e.kind]}</strong><small>${esc(e.quantity??'—')}주 · 기준가 ${money(e.reference_price)}</small><small>${esc(e.reason)}</small><small>손익 ${money(e.pnl)} · 수익률 <b>${pct(virtualReturn(e))}</b></small><small>수수료·세금 제외${e.kind==='BUY'?' · 매수 시점에는 실현 수익률 없음':''}</small></section>`;
-  return `<article class="signal-row"><div class="signal-event-heading">${badge}<strong>${esc(e.name)} (${esc(e.code)}) · ${e.kind==='SELL'?'매도':'매수'} 신호</strong></div><small>신호 발생 ${when(e.at)} (한국시간)</small><div class="signal-results ${tradeType==='all'?'':'signal-results-single'}">${tradeType!=='real'?virtual:''}${tradeType!=='virtual'?actualCard(e,actualFor(e)):''}</div></article>`;
+  return `<article class="signal-row"><div class="signal-event-heading">${badge}${e.kind==='BUY'?buyReturnBadge(virtualBuyReturn(e)):''}<strong>${esc(e.name)} (${esc(e.code)}) · ${e.kind==='SELL'?'매도':'매수'} 신호</strong></div><small>신호 발생 ${when(e.at)} (한국시간)</small><div class="signal-results ${tradeType==='all'?'':'signal-results-single'}">${tradeType!=='real'?virtual:''}${tradeType!=='virtual'?actualCard(e,actualFor(e)):''}</div></article>`;
  }).join(''):tradeType==='real'?'<p class="signal-empty">이 신호에 연결된 실제 주문 내역이 없습니다.</p>':`<p class="signal-empty">기록된 ${eventSide==='SELL'?'매도':'매수'} 신호가 없습니다.</p>`;
 }
 el('details').addEventListener('change',()=>{panel.dataset.signalDetails=String(el('details').checked)});
@@ -425,7 +467,7 @@ function choose(){
  panel.querySelectorAll('[data-signal-market]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.signalMarket===market)));
  panel.querySelectorAll('[data-signal-strategy]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.signalStrategy===selected)));
  el('title').textContent=(market==='KR'?'국내주식':'해외주식')+' · '+definitions[selected][0];el('rule').textContent=definitions[selected][1];
- el('period').textContent=periodLabel()+' 수익률 계산 중…';el('summary').innerHTML='';el('positions').textContent='조회 중…';el('history-chart').textContent='조회 중…';eventRecords=null;executionRecords=[];renderEvents();el('issues').textContent='';el('check').textContent='';el('elapsed').textContent='조회 중…';el('started').textContent='';el('state').textContent='선택한 전략의 검증 결과를 조회하고 있습니다.';
+ el('period').textContent=periodLabel()+' 수익률 계산 중…';el('summary').innerHTML='';el('positions').textContent='조회 중…';el('history-chart').textContent='조회 중…';eventRecords=null;virtualSnapshot=null;executionRecords=[];renderEvents();el('issues').textContent='';el('check').textContent='';el('elapsed').textContent='조회 중…';el('started').textContent='';el('state').textContent='선택한 전략의 검증 결과를 조회하고 있습니다.';
  document.querySelector('#header-status').textContent=el('title').textContent+' · 신호검증';
  history.replaceState(null,'','#signal-validation-'+market.toLowerCase()+'-'+selected);load();
 }
