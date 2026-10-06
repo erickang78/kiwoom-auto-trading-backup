@@ -11,7 +11,8 @@ are included in the patch.
 ## Budget and ownership contract
 
 - `(market,strategy)` is the portfolio key; selected status/start/stop/restart,
-  holdings, orders, cumulative/period returns and daily history use that scope.
+  holdings, orders and cumulative/period returns use that scope. Daily history
+  retains the five-strategy chart, calculated from each strategy’s own positions.
 - The existing market budget becomes `market_budgets.total_cap`. Legacy KR cap and
   breakout allocation remain exactly 2,400,000 when that is the legacy value; US
   amounts remain USD. The existing active flag, revisions, start timestamps, JSON
@@ -88,9 +89,9 @@ The Node DOM smoke checks editable running allocations, overview, selected stop,
 strategy switching and explicit start confirmation. All broker functions in trading
 smokes are synthetic mocks; no production orders or data mutations are used.
 
-Final local results: `server-sync` 272 tests passed; `server-baseline/current`
-257 tests passed; multi-user/login/candidate suite 37 tests passed; repository secret
+Final local results: `server-sync` 275 tests passed; `server-baseline/current`
+260 tests passed; multi-user/login/candidate suite 37 tests passed; repository secret
 checks 5 tests passed; Node strategy UI integration and all three affected script
-syntax checks passed. The new strategy safety suite includes 22 synthetic tests.
+syntax checks passed. The new strategy safety suite includes 25 synthetic tests.
 Candidate build/preflight passed, and candidate mutation routes returned 403 in
 synthetic handler tests. These are local checks, not live multi-strategy execution.

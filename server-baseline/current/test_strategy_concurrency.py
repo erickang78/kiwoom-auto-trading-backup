@@ -68,6 +68,16 @@ class StrategyTests(unittest.TestCase):
             for other in STRATEGIES:
                 self.assertEqual(self.control(other)['enabled'],STRATEGIES.index(other)>STRATEGIES.index(stopped))
         self.assertEqual(self.control()['market_budget']['allocated'],'500000')
+    def test_default_worker_cycle_visits_all_enabled_strategies(self):
+        self.control(action='allocate',budget='0')
+        for strategy in STRATEGIES:
+            self.control(strategy,'allocate',budget='100000');self.control(strategy,'start',confirmed=True)
+        visited=[]
+        def scan(strategy):visited.append(strategy);return dict(status='ready',date='20260929',stocks=[])
+        with patch.object(auto,'account',return_value=({}, {}, set())),patch.object(auto,'send') as send:
+            auto.cycle('KR',self.db,self.gate,NOW,lambda _:object(),scan,lambda _:self.fail('empty scan quote'))
+            send.assert_not_called()
+        self.assertCountEqual(visited,STRATEGIES);self.assertEqual(len(visited),5)
     def test_running_edit_revision_and_committed_floor(self):
         self.split();before=self.control()
         self.seed('trend',{'KRX:005930':self.position('trend',qty=2,price=9000)})
@@ -154,6 +164,17 @@ class StrategyTests(unittest.TestCase):
         self.control('breakout','allocate',budget='45270')
         with self.assertRaisesRegex(ValueError,'allocation_below_committed'):self.control('breakout','allocate',budget='45269')
         with auto.connect(self.db) as db:self.assertEqual(budgets.exposure(db,'KR','breakout')[0],Decimal('45270'))
+    def test_partial_reconcile_updates_each_enabled_strategys_own_book(self):
+        self.split();self.intent('trend');self.intent('breakout',qty=4,price=25000,code='000001',number='789')
+        reports=[dict(ord_no='123',stk_cd='005930',cntr_qty='2',ord_remnq='8',cntr_uv='9000'),dict(ord_no='789',stk_cd='000001',cntr_qty='1',ord_remnq='3',cntr_uv='25000')]
+        def quote(code):return dict(quote=dict(cur_prc=9000 if code=='005930' else 25000,trde_qty=20))
+        with patch.object(auto,'account',return_value=({'005930':2,'000001':1},{'005930':2,'000001':1},set())),patch.object(auto,'order_rows',return_value=reports),patch.object(auto,'send') as send:
+            auto.cycle('KR',self.db,self.gate,NOW,lambda _:object(),lambda _:dict(status='ready',date='20260929',stocks=[]),quote)
+            send.assert_not_called()
+        self.assertEqual([(p['code'],p['quantity']) for p in self.control()['positions']],[('005930',2)])
+        self.assertEqual([(p['code'],p['quantity']) for p in self.control('breakout')['positions']],[('000001',1)])
+        self.assertEqual(self.control()['orders'][0]['status'],'partial')
+        self.assertEqual(self.control('breakout')['orders'][0]['status'],'partial')
     def test_unknown_other_symbol_blocks_all_new_buys(self):
         self.split();self.seed('trend');self.control('breakout','stop')
         self.intent('breakout',status='unknown',number='',code='000001')
@@ -197,8 +218,25 @@ class StrategyTests(unittest.TestCase):
             self.assertEqual(build(db,'KR','breakout')['summary']['pnl'],-10)
         self.assertEqual(self.control()['performance']['realized_pnl'],10)
         self.assertEqual(self.control('breakout')['performance']['realized_pnl'],-10)
-        self.assertEqual([s['strategy'] for s in self.control()['performance_history']['series']],['trend'])
+        self.assertEqual([s['strategy'] for s in self.control()['performance_history']['series']],list(STRATEGIES))
         self.assertTrue(all(o['order']['code']=='005930' for o in self.control()['orders']))
+    def test_five_strategy_chart_uses_each_portfolios_own_positions(self):
+        from auto_performance_history import record
+        self.split()
+        trend=self.position('trend',code='000001',price=100);trend['last_price']=110
+        breakout=self.position('breakout',code='000002',qty=2,price=100);breakout['last_price']=90
+        self.seed('trend',{'KRX:000001':trend});self.seed('breakout',{'KRX:000002':breakout})
+        self.intent('trend',status='filled',qty=1,applied=1,price=100,code='000001')
+        self.intent('breakout',status='filled',qty=2,applied=2,price=100,code='000002')
+        with auto.connect(self.db) as db:record(db,NOW)
+        for selected in ('trend','breakout'):
+            response=self.control(selected)
+            history={s['strategy']:s['points'] for s in response['performance_history']['series']}
+            self.assertEqual(len(history),5)
+            self.assertEqual(history['trend'][0]['return_pct'],10)
+            self.assertEqual(history['breakout'][0]['return_pct'],-10)
+            self.assertIsNone(history['momentum'][0]['return_pct'])
+            self.assertEqual(response['positions'][0]['strategy'],selected)
 
 class MigrationTests(unittest.TestCase):
     def test_startup_refuses_legacy_without_offline_backup(self):

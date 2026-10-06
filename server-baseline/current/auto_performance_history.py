@@ -11,9 +11,7 @@ def record(db,now):
     day=now.astimezone(ZoneInfo('Asia/Seoul')).date().isoformat()
     for market in ('KR','US'):
         for strategy in STRATEGIES:
-            columns=db.execute('PRAGMA table_info(portfolios)').fetchall()
-            composite=sum(bool(x[5]) for x in columns)>1
-            row=db.execute('SELECT data FROM portfolios WHERE market=? AND strategy=?',(market,strategy)).fetchone() if composite else db.execute('SELECT data FROM portfolios WHERE market=?',(market,)).fetchone()
+            row=db.execute('SELECT data FROM portfolios WHERE market=? AND strategy=?',(market,strategy)).fetchone()
             positions=list(json.loads(row['data'])['positions'].values()) if row else []
             perf=cumulative(db,market,strategy,positions)
             db.execute('INSERT OR REPLACE INTO daily_returns VALUES(?,?,?,?,?)',(market,strategy,day,now.isoformat(),json.dumps(perf,allow_nan=False)))

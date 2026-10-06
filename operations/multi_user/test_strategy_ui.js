@@ -32,5 +32,14 @@ class Element{
  await node('confirm-start').fire('click');await flush();
  assert.equal(calls.at(-1).strategy,'breakout');assert.equal(calls.at(-1).action,'start');assert.equal(calls.at(-1).confirmed,true);
  assert.equal(states.trend.enabled,false);assert.equal(states.breakout.enabled,true);
+ // Exercise the existing chart renderer with five independently calculated series.
+ const chart=new Element(),chartContext={market:'KR',selected:'breakout',finite:v=>typeof v==='number'&&Number.isFinite(v),esc:v=>String(v),when:v=>String(v),el:()=>chart};
+ const renderSource=page.slice(page.indexOf('function renderHistory('),page.indexOf('\nwindow.moaRenderRealReturnHistory='));
+ vm.runInNewContext(renderSource,chartContext);
+ const strategyNames=['trend','breakout','pullback','reversion','momentum'];
+ chartContext.renderHistory({market:'KR',series:strategyNames.map((strategy,index)=>({strategy,points:[{day:'2026-09-30',at:'synthetic',return_pct:index===0?10:index===1?-10:null}]}))},chart,true,'breakout');
+ assert.equal((chart.innerHTML.match(/<span style="color:/g)||[]).length,5);
+ assert.match(chart.innerHTML,/5개 전략 일별 누적 실제매매 수익률/);
+ assert.match(chart.innerHTML,/추세추종 · 2026-09-30 · 10\.00%/);assert.match(chart.innerHTML,/돌파매매 · 2026-09-30 · -10\.00%/);
  console.log('Strategy UI integration PASS');
 })().catch(error=>{console.error(error);process.exitCode=1;});

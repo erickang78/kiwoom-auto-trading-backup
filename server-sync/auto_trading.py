@@ -133,7 +133,7 @@ def control(body, path=DB, control_path=CONTROL):
                         stop_reason=__import__('auto_recovery').explanation(db,row,state) if not row['enabled'] else None,
                         restart_check=state.get('restart_check'),
                         positions=list(state['positions'].values()), orders=orders,
-                        performance_history=__import__('auto_performance_history').history(db,market,strategy),
+                        performance_history=__import__('auto_performance_history').history(db,market),
                         performance=__import__('auto_performance').cumulative(db,market,strategy,list(state['positions'].values())),
                         performance_periods=__import__('auto_performance_period').periods(db,market,strategy,list(state['positions'].values())),
                         rules=dict(REAL_RULES))
