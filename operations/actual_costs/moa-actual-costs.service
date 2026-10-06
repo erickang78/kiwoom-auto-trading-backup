@@ -1,0 +1,24 @@
+[Unit]
+Description=Read-only automatic order actual cost snapshots
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/kiwoom/current
+Environment=PYTHONPATH=/opt/kiwoom/current
+ExecStart=/usr/bin/python3 /opt/kiwoom/current/auto_cost_collector.py
+TimeoutStartSec=180
+MemoryHigh=64M
+MemoryMax=96M
+CPUQuota=20%
+TasksMax=32
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/kiwoom/current /opt/kiwoom/secrets
+ReadWritePaths=/opt/kiwoom/state
+UMask=0077

@@ -14,14 +14,15 @@ class Element{
  const signal=process.env.TEST_SIGNAL_UI==='1';
  const page=fs.readFileSync('server-baseline/dashboard/dist/index.html','utf8');
  const source=page.split('<script id="auto-trading-execution-module">')[1].split('</script>')[0];
- const panel=new Element(),head=new Element(),elements=[],calls=[];let choice='trend',focusedBudget=null;
+ const panel=new Element(),head=new Element(),elements=[],calls=[];let choice='trend',focusedBudget=null,netComplete=false;
  panel.querySelector=selector=>selector.startsWith(signal?'[data-signal-market]':'[data-strategy-market]')?{dataset:signal?{signalMarket:'KR'}:{strategyMarket:'KR'}}:selector.startsWith(signal?'[data-signal-strategy]':'[data-strategy]')?{dataset:signal?{signalStrategy:choice}:{strategy:choice}}:(panel.nodes[selector]||(panel.nodes[selector]=new Element()));
  const states={trend:{enabled:true,budget:'2400000'},breakout:{enabled:false,budget:'0'}};
- const response=body=>({market:'KR',strategy:body.strategy,selected_strategy:body.strategy,global_enabled:true,...states[body.strategy],started_at:null,positions:[],orders:[],issues:[],market_budget:{total_cap:'2400000',allocated:'2400000',strategies:[{strategy:'trend',enabled:true,allocation:'2400000',committed:'500000',positions:9,slots:9},{strategy:'breakout',enabled:false,allocation:'0',committed:'0',positions:0,slots:0}]}});
+ const response=body=>({market:'KR',strategy:body.strategy,selected_strategy:body.strategy,global_enabled:true,...states[body.strategy],performance_net:{available:true,provisional:!netComplete,pending_cost_orders:netComplete?0:7,confirmed_cost_orders:43,filled_orders:50,confirmed_fee:270,confirmed_tax:1506,cumulative_buy_amount:100000,realized_pnl:1000,unrealized_pnl:-500,total_pnl:500,return_pct:.5,closed_trades:2,win_rate_pct:50},started_at:null,positions:[],orders:[],issues:[],market_budget:{total_cap:'2400000',allocated:'2400000',strategies:[{strategy:'trend',enabled:true,allocation:'2400000',committed:'500000',positions:9,slots:9},{strategy:'breakout',enabled:false,allocation:'0',committed:'0',positions:0,slots:0}]}});
  const document={head,createElement:tag=>{const e=new Element(tag);elements.push(e);return e;},dispatchEvent(){},querySelector:selector=>selector===(signal?'#panel-signal-validation':'#panel-strategy')?panel:null};
  const context={CustomEvent:class{},document,window:{addEventListener(){}},MutationObserver:class{observe(){}},TOKEN:'synthetic',setTimeout(){return 1;},clearTimeout(){},fetch:async(url,options)=>{const body=JSON.parse(options.body);if(focusedBudget)assert.equal(focusedBudget.disabled,false,'polling must not disable and blur the focused input');calls.push(body);if(body.action==='allocate')states[body.strategy].budget=body.budget;if(body.action==='stop')states[body.strategy].enabled=false;if(body.action==='start')states[body.strategy].enabled=true;return {ok:true,json:async()=>response(body)};}};
  vm.runInNewContext(source,context);const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};await flush();
  const card=elements.find(e=>e.id===(signal?'signal-real-auto-trading':'real-auto-trading')),node=id=>card.querySelector((signal?'#signal-auto-':'#auto-')+id);
+ if(signal){const overview=elements.find(e=>e.id==='signal-real-overview');const text=overview.children.map(e=>e.textContent).join(' ');assert.match(text,/잠정 누적 실제매매 수익률/);assert.match(text,/확인된 비용 반영 · 미확정 7건/);assert.match(text,/미확정 비용 추가 반영 시 수익률이 달라질 수 있습니다/);assert.match(text,/누적 매수대금은 비용 제외 체결 원금/);assert.match(text,/일별 그래프와 기간 손익은 비용 제외/);}
  assert.equal(node('budget').disabled,false,'running allocation must be editable');assert.equal(node('budget').value,'2,400,000');
  assert.equal(node('start').disabled,true);assert.equal(node('stop').disabled,false);
  assert.match(node('market-overview').children.map(e=>e.textContent).join(' '),/시장 전체 한도 2,400,000원.*돌파매매/);
@@ -47,6 +48,7 @@ class Element{
  await node('confirm-start').fire('click');await flush();
  assert.equal(calls.at(-1).strategy,'breakout');assert.equal(calls.at(-1).action,'start');assert.equal(calls.at(-1).confirmed,true);assert.equal(calls.at(-1).budget,'600000','start payload excludes commas');
  assert.equal(states.trend.enabled,false);assert.equal(states.breakout.enabled,true);
+ if(signal){netComplete=true;await panel.events.click({target:{closest:()=>true}});await flush();const text=elements.find(e=>e.id==='signal-real-overview').children.map(e=>e.textContent).join(' ');assert.match(text,/누적 실제매매 순수익률 · 비용 포함/);assert.doesNotMatch(text,/미확정 비용 추가 반영/);}
  // Exercise the existing chart renderer with five independently calculated series.
  const chart=new Element(),chartContext={market:'KR',selected:'breakout',finite:v=>typeof v==='number'&&Number.isFinite(v),esc:v=>String(v),when:v=>String(v),el:()=>chart};
  const renderSource=page.slice(page.indexOf('function renderHistory('),page.indexOf('\nwindow.moaRenderRealReturnHistory='));
