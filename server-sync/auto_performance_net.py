@@ -9,10 +9,12 @@ COSTS = Path('/opt/kiwoom/state/automatic-execution-costs.json')
 def read_costs(path=COSTS):
     try:
         data = json.loads(Path(path).read_text())
-        if data.get('schema_version') != 1 or not isinstance(data.get('orders'), list):
+        if not isinstance(data, dict) or data.get('schema_version') != 1 or not isinstance(data.get('orders'), list):
             raise ValueError('cost_schema')
         seen = set()
         for record in data['orders']:
+            if not isinstance(record, dict):
+                raise ValueError('cost_record_schema')
             key = (record['market'], record['strategy'], record['intent_id'])
             if key in seen:
                 raise ValueError('duplicate_cost_identity')

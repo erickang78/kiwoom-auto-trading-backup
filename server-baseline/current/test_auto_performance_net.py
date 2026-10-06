@@ -73,6 +73,13 @@ class NetTests(unittest.TestCase):
             p=Path(d)/'costs.json';p.write_text('{')
             self.assertTrue(net.read_costs(p)[1]);b=intent();p.write_text(json.dumps(dict(schema_version=1,orders=[cost(b),cost(b)])))
             self.assertTrue(net.read_costs(p)[1])
+    def test_valid_json_wrong_schema_degrades_provisional(self):
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/'costs.json'
+            for data in [[],None,'text',123,dict(schema_version=1,orders=[None]),dict(schema_version=1,orders=['text'])]:
+                p.write_text(json.dumps(data));records,error=net.read_costs(p)
+                self.assertTrue(error);b=intent();v=net.calculate([b],[position()],'KR','breakout',records,error)
+                self.assertTrue(v['available']);self.assertTrue(v['provisional']);self.assertEqual(v['pending_cost_orders'],1)
     def test_unconfirmed_ledger_unavailable(self):
         b=intent(status='unknown');self.assertFalse(self.compute([b],[position()],[])['available'])
 
