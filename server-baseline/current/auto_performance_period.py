@@ -4,7 +4,7 @@ import json
 import math
 from zoneinfo import ZoneInfo
 from auto_performance import cumulative
-DAYS=(3,5,10,30,50,100)
+DAYS=(1,3,5,10,30,50,100)
 KST=ZoneInfo('Asia/Seoul')
 def number(value):
     value=float(value)

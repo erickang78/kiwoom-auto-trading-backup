@@ -27,3 +27,13 @@ class PeriodNetTests(RealProfitNetTests):
         zero=dict(available=True,holding_cost=100,unrealized_pnl=20,cumulative_buy_amount=100,realized_pnl=0,closed_trades=0,winning_trades=0)
         current=dict(zero,cumulative_buy_amount=200,unrealized_pnl=40)
         p=calculate(current,zero,3,dt.datetime.now(KST),dt.datetime.now(KST));self.assertEqual(p['capital_base'],220);self.assertEqual(p['total_pnl'],20)
+    def test_today_empty_kr_us_kst_midnight_and_legacy_windows(self):
+        from auto_performance_period import net_periods
+        from unittest.mock import patch
+        for market in ('KR','US'):
+            for now in (dt.datetime(2026,10,5,14,59,tzinfo=dt.timezone.utc),dt.datetime(2026,10,5,15,0,tzinfo=dt.timezone.utc)):
+                with patch('auto_performance_net.read_costs',return_value=([],None)):
+                    r=net_periods(self.db,market,'breakout',[],now)
+                self.assertEqual(set(r),{'1','3','5','10','30','50','100'})
+                today=r['1'];self.assertTrue(today['available']);self.assertIsNone(today['return_pct'])
+                start=dt.datetime.fromisoformat(today['period_start']);self.assertEqual(start.date(),now.astimezone(KST).date());self.assertEqual(start.hour,0)
