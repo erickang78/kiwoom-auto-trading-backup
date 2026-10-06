@@ -1,4 +1,4 @@
-# Strategy concurrency candidate — not deployed
+# Strategy concurrency — deployed 2026-10-06
 
 This branch adds independent real-trading portfolios for trend, breakout, pullback,
 reversion and momentum. It was built over source read from the live server, retaining
@@ -42,13 +42,13 @@ are included in the patch.
 - UI exposes selected-strategy allocation save/start/stop and market cap/allocation/
   committed/holdings overview. Starting still has a separate confirmation step.
 
-## Future migration and rollback (separate deployment authorization required)
+## Offline migration and rollback procedure
 
 The application refuses a legacy market-only schema at startup. Migration must be
 an explicit offline operation with a separate backup, rather than being triggered
-by a status request. No commands below were run on production for this task.
+by a status request. The authorized deployment below followed this procedure.
 
-1. Before a future deployment, re-fetch the live source and compare hashes with the
+1. Before deployment, re-fetch the live source and compare hashes with the
    captured baseline; preserve later live edits. Back up only affected code/UI and
    unit definitions. Identify and stop **all auto DB writers** for the maintenance
    window, including API requests, real worker and performance snapshot worker.
@@ -95,3 +95,43 @@ checks 5 tests passed; Node strategy UI integration and all three affected scrip
 syntax checks passed. The new strategy safety suite includes 25 synthetic tests.
 Candidate build/preflight passed, and candidate mutation routes returned 403 in
 synthetic handler tests. These are local checks, not live multi-strategy execution.
+
+## Production deployment record
+
+Application commit `0bd3f1de28d8c82e9f9b02e58260a602fadc3e1d` was deployed
+on 2026-10-06. Live baseline hashes matched before replacement. Only
+`auto_trading.py`, `strategy_budget.py`, `auto_recovery.py`,
+`auto_performance_history.py` and the inner `auto-trading-execution-module`
+HTML script changed. All unrelated HTML bytes were preserved.
+
+A network-isolated, credential/state-inaccessible transient server test ran
+234 synthetic tests successfully before stopping production writers. A preparation
+wrapper variable error occurred after those tests, before any production change;
+the successful saved result and unchanged baseline were verified before continuing.
+
+Deployment SSM command `607a7799-aa4c-43b7-b523-530a779218e2` completed
+Success/exit 0. Private backup directory:
+`/opt/kiwoom/.strategy-backup-20261006T022743Z` (0700), with
+`auto-trading.sqlite3` (0600). Original portfolio rows and all original intent
+columns/IDs/payload/status/dedup and intent failures were compared exactly with
+writers stopped, before resuming. DB integrity passed; KR cap and breakout
+allocation remain 2,400,000 KRW; US cap remains 1,000 USD. New strategy rows
+are disabled with zero allocations. No new strategy was started.
+
+Only the existing API, real performance and real auto-trading writer services
+were stopped/restarted, restoring active/enabled state. Caddy, dashboard,
+shared-login, signal-validation and Kakao service PIDs remained unchanged.
+No credentials, shared authentication/configuration, pilot environment or
+service unit definitions changed.
+
+Final read-only SSM command `8d1f7272-6436-4740-aa0f-a085c7153388` completed
+Success/exit 0 at 2026-10-06 11:33 KST: all five selected KR statuses returned
+200 with five-series history; stock-list was verified 200 during deployment;
+public HTTPS login returned 200; DB integrity and private backup permissions
+passed. Staging was removed. Existing breakout execution resumed under the
+previous enabled state; no live test order or new strategy start was issued.
+
+`deploy.py` implements private staging, isolated synthetic tests, offline backup/
+migration and exact preservation checks, atomic installation, writer-state
+restoration, and pre-resume rollback. It refuses stale DB restoration after
+worker resumption. Do not rerun the completed deployment command.
