@@ -23,6 +23,15 @@ assert.equal(c.actualBuyReturn(order,recycled).sold,true);assert.equal(c.actualB
 assert.equal(c.actualBuyReturn(order,{...snapshot,positions:[{...position,entry_at:'2026-10-06T00:00:00Z'}]}).pct,null);
 assert.equal(c.actualBuyReturn(order,{...snapshot,positions:[{...position,entry_at:later,entry_price:101}]}).pct,null);
 assert.equal(c.actualBuyReturn(order,{...snapshot,orders:Array(30).fill(order)}).pct,null);
+const unrelated=Array.from({length:29},(_,i)=>({...order,id:100+i,order:{...order.order,code:'OTHER'+i}}));
+const truncated={...snapshot,orders:[order,...unrelated]};
+assert.match(c.buyReturnBadge(c.actualBuyReturn(order,truncated)),/\+2.15%/,'30-row all-symbol window proves exact recent buy');
+assert.equal(c.actualBuyReturn(order,{...truncated,orders:[order,sell,...unrelated]}).pct,null,'closed old cycle cannot borrow current position');
+assert.equal(c.actualBuyReturn(order,{...truncated,orders:[order,rebuy,...unrelated]}).pct,null,'newer confirmed buy invalidates old anchor');
+assert.equal(c.actualBuyReturn(order,{...truncated,orders:[order,{...sell,status:'unknown',filled:0},...unrelated]}).pct,null);
+assert.equal(c.actualBuyReturn(order,{...truncated,orders:[order,{...sell,filled:1},...unrelated],positions:[{...snapshot.positions[0],quantity:1}]}).pct>0,true,'partial sell suffix proof');
+assert.equal(c.actualBuyReturn(order,{...truncated,positions:[{...snapshot.positions[0],entry_at:'2026-10-06T00:00:00Z'}]}).pct,null);
+
 assert.equal(c.actualBuyReturn({...order,market:'US'},snapshot).pct,null);assert.equal(c.actualBuyReturn({...order,strategy:'trend'},snapshot).pct,null);
 assert.equal(c.actualBuyReturn(order,{...snapshot,positions:[{...position,last_price:null}]}).pct,null);
 assert.equal(c.actualBuyReturn(order,{...snapshot,positions:[{...position,quantity:1,entry_at:later}],orders:[order,{...sell,filled:1}]}).pct>0,true,'partial sell retains current cycle');

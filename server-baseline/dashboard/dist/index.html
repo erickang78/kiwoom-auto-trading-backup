@@ -394,8 +394,29 @@ function actualBuyReturn(x,d){
  if(x.order?.side!=='buy')return null;
  const unknown={pct:null};
  if(!d||d.market!==market||d.selected_strategy!==selected||x.market!==market||x.strategy!==selected)return unknown;
- // Status exposes at most 30 orders. A full 30-row window cannot prove a complete cycle.
- if(!Array.isArray(d.orders)||d.orders.length>=30)return unknown;
+ // Status exposes at most 30 orders; prove truncated windows per current symbol cycle.
+ if(!Array.isArray(d.orders))return unknown;
+ if(d.orders.length>=30){
+  // A truncated all-symbol window still contains the complete suffix of a recent buy.
+  // Prove that exact current cycle from its unique entry-time anchor, not older history.
+  const positions=(d.positions||[]).filter(p=>p.strategy===selected&&sameBuySymbol(p,x.order));
+  if(positions.length!==1)return unknown;
+  const p=positions[0],entry=Date.parse(p.entry_at);
+  const symbol=d.orders.filter(o=>o.market===market&&o.strategy===selected&&sameBuySymbol(o.order,x.order));
+  const anchors=symbol.filter(o=>o.order.side==='buy'&&Number(o.filled)>0&&Number(o.average)===Number(p.entry_price)&&Number.isFinite(entry)&&Date.parse(o.created)<=entry&&entry<=Date.parse(o.updated));
+  if(anchors.length!==1||anchors[0].id!==x.id||!Number.isSafeInteger(Number(x.id)))return unknown;
+  let remaining=Number(x.filled);
+  if(!Number.isInteger(remaining)||remaining<=0||Number(x.applied??x.filled)!==remaining||['unknown','reconcile_error'].includes(x.status))return unknown;
+  const suffix=symbol.filter(o=>Number(o.id)>Number(x.id)).sort((a,b)=>Number(a.id)-Number(b.id));
+  for(const o of suffix){const filled=Number(o.filled);
+   if(!Number.isSafeInteger(Number(o.id))||['unknown','reconcile_error'].includes(o.status)||!Number.isInteger(filled)||filled<0||Number(o.applied??o.filled)!==filled)return unknown;
+   if(!filled)continue;
+   if(o.order.side!=='sell')return unknown;
+   remaining-=filled;if(remaining<=0)return unknown;
+  }
+  if(remaining!==Number(p.quantity))return unknown;
+  return currentBuyReturn(p,x.average);
+ }
  const ledger=d.orders.filter(o=>o.market===market&&o.strategy===selected&&sameBuySymbol(o.order,x.order)&&Number(o.filled)>0).sort((a,b)=>Number(a.id)-Number(b.id));
  let quantity=0,cycle=[],closed=new Set();
  for(const o of ledger){const filled=Number(o.filled);if(!Number.isInteger(filled)||filled<=0)return unknown;
