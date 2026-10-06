@@ -8,6 +8,7 @@ class Element{
  append(...items){this.children.push(...items);}after(...items){this.afterItems=items;}
  replaceChildren(...items){this.children=items;}addEventListener(event,fn){this.events[event]=fn;}
  setSelectionRange(start,end,direction){this.selectionStart=start;this.selectionEnd=end;this.selectionDirection=direction;}
+ setAttribute(k,v){this[k]=v;}
  async fire(event){return this.events[event]?.({target:this});}
 }
 (async()=>{
@@ -22,7 +23,9 @@ class Element{
  const context={CustomEvent:class{},document,window:{addEventListener(){}},MutationObserver:class{observe(){}},TOKEN:'synthetic',setTimeout(){return 1;},clearTimeout(){},fetch:async(url,options)=>{const body=JSON.parse(options.body);if(focusedBudget)assert.equal(focusedBudget.disabled,false,'polling must not disable and blur the focused input');calls.push(body);if(body.action==='allocate')states[body.strategy].budget=body.budget;if(body.action==='stop')states[body.strategy].enabled=false;if(body.action==='start')states[body.strategy].enabled=true;return {ok:true,json:async()=>response(body)};}};
  vm.runInNewContext(source,context);const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};await flush();
  const card=elements.find(e=>e.id===(signal?'signal-real-auto-trading':'real-auto-trading')),node=id=>card.querySelector((signal?'#signal-auto-':'#auto-')+id);
- if(signal){const overview=elements.find(e=>e.id==='signal-real-overview');const text=overview.children.map(e=>e.textContent).join(' ');assert.match(text,/잠정 누적 실제매매 수익률/);assert.match(text,/확인된 비용 반영 · 미확정 7건/);assert.match(text,/미확정 비용 추가 반영 시 수익률이 달라질 수 있습니다/);assert.match(text,/누적 매수대금은 비용 제외 체결 원금/);assert.match(text,/일별 그래프와 기간 손익은 비용 제외/);}
+ if(signal){const overview=elements.find(e=>e.id==='signal-real-overview');const text=overview.children.map(e=>e.textContent).join(' ');assert.match(text,/잠정 누적 실제매매 수익률/);assert.match(text,/확인된 비용 반영 · 미확정 7건/);assert.match(text,/미확정 비용 추가 반영 시 수익률이 달라질 수 있습니다/);assert.match(text,/누적 매수대금은 비용 제외 체결 원금/);assert.match(text,/일별 비교 그래프는 비용 제외/);}
+
+ if(signal){const overview=elements.find(e=>e.id==='signal-real-overview');let tabs=()=>overview.children.find(e=>e.className==='strategy-tabs signal-real-period-tabs');assert.equal(tabs().children.length,7);await tabs().children[1].fire('click');assert.match(overview.children.map(e=>e.textContent).join(' '),/3일 실제매매/);await panel.events.click({target:{closest:()=>true}});await flush();assert.equal(tabs().children[1]['aria-pressed'],'true','poll preserves period');choice='breakout';await panel.events.click({target:{closest:()=>true}});await flush();assert.equal(tabs().children[1]['aria-pressed'],'true','strategy switch preserves period');await tabs().children[0].fire('click');choice='trend';await panel.events.click({target:{closest:()=>true}});await flush();}
  assert.equal(node('budget').disabled,false,'running allocation must be editable');assert.equal(node('budget').value,'2,400,000');
  assert.equal(node('start').disabled,true);assert.equal(node('stop').disabled,false);
  assert.match(node('market-overview').children.map(e=>e.textContent).join(' '),/시장 전체 한도 2,400,000원.*돌파매매/);

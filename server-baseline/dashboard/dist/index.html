@@ -878,6 +878,7 @@ const realHistoryCard=signal?document.createElement('section'):null;
 let realHistoryPlot;
 if(realHistoryCard){realHistoryCard.id='signal-real-history-card';realHistoryCard.className='card signal-card';const heading=document.createElement('h2');heading.textContent='전략별 일별 누적 실제매매 수익률 · 비용 제외';const note=document.createElement('p');note.className='muted';note.textContent='한국시간 날짜별 마지막 기록 기준 · 수수료·세금·환전 비용 제외 · 실제 자동매매 체결과 마지막 확인 시세로 평가합니다. 기록 수집 시작 전 날짜는 복원하지 않으며, 무체결·확인 불가·기록 없는 날짜는 연결하지 않습니다.';realHistoryPlot=document.createElement('div');realHistoryPlot.className='signal-return-chart';realHistoryPlot.id='signal-real-history-chart';realHistoryCard.append(heading,note,realHistoryPlot);panel.querySelector('#signal-history-card').after(realHistoryCard);}
 function renderRealHistory(){if(!realHistoryPlot)return;if(!data){realHistoryPlot.textContent='실제 일별 수익률 기록을 조회하고 있습니다…';return;}if(window.moaRenderRealReturnHistory)window.moaRenderRealReturnHistory(data.performance_history,realHistoryPlot,data.selected_strategy||selected().strategy);}
+let realDays="all";
 function renderOverview(){
  if(!overview)return;
  renderRealHistory();
@@ -892,18 +893,22 @@ function renderOverview(){
  add('p','실제 평균 매수가 대비 +'+r.take_profit_pct+'% 익절 / '+r.stop_loss_pct+'% 손절 · 정규장 '+r.poll_seconds+'초 주기');
  add('p',strategyDefinitions[viewed]?.[1]||'전략 조건 확인 중');
  add('p',data.strategy===viewed?((data.enabled?(data.global_enabled?'선택한 전략 실행 중':'전체 중지로 실행 대기'):'선택한 전략 중지')+' · 예산 '+Number(data.budget).toLocaleString('ko-KR')+(data.market==='KR'?'원':' USD')+(data.started_at?' · 최초 시작 '+new Date(data.started_at).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'')):'선택한 전략은 현재 실행 중이 아닙니다. 현재 실행 상태는 아래 실제 자동매매 카드에서 확인합니다.');
- const perf=data.performance_net, valid=perf?.available===true;const netTitle=perf?.provisional?'잠정 누적 실제매매 수익률':'누적 실제매매 순수익률 · 비용 포함';
+ const tabs=document.createElement('div');tabs.className='strategy-tabs signal-real-period-tabs';tabs.setAttribute('role','group');tabs.setAttribute('aria-label','실제매매 수익률 기간');
+ for(const n of ['all',3,5,10,30,50,100]){const b=document.createElement('button');b.type='button';b.dataset.realDays=String(n);b.textContent=n==='all'?'누적':n+'일';b.setAttribute('aria-pressed',String(String(n)===realDays));b.addEventListener('click',()=>{realDays=String(n);renderOverview();});tabs.append(b);}overview.append(tabs);
+ const cumulative=realDays==='all',perf=cumulative?data.performance_net:data.performance_periods_net?.[realDays],valid=perf?.available===true;
+ const netTitle=(perf?.provisional?'잠정 ':'')+(cumulative?'누적':realDays+'일')+' 실제매매 '+(perf?.provisional?'수익률':'순수익률 · 비용 포함');
  const amount=v=>valid&&typeof v==='number'&&Number.isFinite(v)?v.toLocaleString('ko-KR',{maximumFractionDigits:4})+(data.market==='KR'?'원':' USD'):'—';
  const percent=v=>valid&&typeof v==='number'&&Number.isFinite(v)?v.toFixed(2)+'%':'—';
  add('h2',netTitle);
  add('p',valid?(perf.provisional?'확인된 비용 반영 · 미확정 '+perf.pending_cost_orders+'건':'체결별 실제 수수료·세금 포함'):'순수익률 조회 대기');
  if(valid&&perf.provisional)add('p','미확정 비용 추가 반영 시 수익률이 달라질 수 있습니다.');
  const grid=document.createElement('div');grid.className='signal-summary';overview.append(grid);
- for(const [label,value] of [[netTitle,percent(perf?.return_pct)],['순실현 + 순평가손익',amount(perf?.total_pnl)],['누적 매수대금 · 비용 제외',amount(perf?.cumulative_buy_amount)],['순실현손익',amount(perf?.realized_pnl)],['순평가손익',amount(perf?.unrealized_pnl)],['승률 · 확인 비용 반영 / 청산 횟수',valid?percent(perf.win_rate_pct)+' / '+perf.closed_trades+'건':'—']]){const cell=document.createElement('div');cell.className='signal-metric';cell.textContent=label;const valueNode=document.createElement('strong');valueNode.textContent=value;cell.append(valueNode);grid.append(cell);}
- add('p',valid?(perf.cumulative_buy_amount>0?'자동전략 체결만 계산 · 누적 매수대금은 비용 제외 체결 원금입니다. 누적 수익률 = (순실현 + 순평가손익) ÷ 누적 매수대금 × 100. 확인된 매수 비용은 매도 수량에 비례해 순실현·순평가에 배분하며 미래 매도 비용은 추정하지 않습니다. 환전 비용은 제외합니다.':'실제 자동매매 체결 내역이 없어 수익률을 표시하지 않습니다.'):perf?.reason||'실제 성과 데이터를 확인할 수 없습니다.');
+ for(const [label,value] of [[netTitle,percent(perf?.return_pct)],['순실현 + 순평가손익',amount(perf?.total_pnl)],[cumulative?'누적 매수대금 · 비용 제외':'기초 평가액 + 기간 매수대금 · 비용 제외',amount(cumulative?perf?.cumulative_buy_amount:perf?.capital_base)],['순실현손익',amount(perf?.realized_pnl)],['순평가손익',amount(perf?.unrealized_pnl)],[cumulative?'승률 · 확인 비용 반영 / 청산 횟수':'기간 청산 횟수 · 승률 미산출',valid?(cumulative?percent(perf.win_rate_pct)+' / ':'')+perf.closed_trades+'건':'—']]){const cell=document.createElement('div');cell.className='signal-metric';cell.textContent=label;const valueNode=document.createElement('strong');valueNode.textContent=value;cell.append(valueNode);grid.append(cell);}
+ add('p',valid?(cumulative?(perf.cumulative_buy_amount>0?'자동전략 체결만 계산 · 누적 매수대금은 비용 제외 체결 원금입니다. 누적 수익률 = (순실현 + 순평가손익) ÷ 누적 매수대금 × 100. 확인된 매수 비용은 매도 수량에 비례해 순실현·순평가에 배분하며 미래 매도 비용은 추정하지 않습니다. 환전 비용은 제외합니다.':'실제 자동매매 체결 내역이 없어 수익률을 표시하지 않습니다.'):'오늘 포함 한국시간 '+realDays+'개 달력일 · 기간 시작 전 마지막 보유 평가액 + 기간 내 매수대금(비용 제외)이 분모입니다. 기간 손익은 기초 평가 대비 변화이며 기간 내 발생한 확인 매수·매도 비용만 차감합니다. 시작 전 매수 비용은 다시 차감하지 않고 미래 매도 비용은 추정하지 않습니다. 경계를 넘는 체결은 임의 배분하지 않습니다.'):perf?.reason||'실제 성과 데이터를 확인할 수 없습니다.');
  if(valid)add('p','확인 비용 '+Number(perf.confirmed_fee+perf.confirmed_tax).toLocaleString('ko-KR')+(data.market==='KR'?'원':' USD')+' · 비용 확인 '+perf.confirmed_cost_orders+'/'+perf.filled_orders+'건 · 승률은 확인된 비용을 차감한 종료 매수 주기 기준'+(perf.provisional?'이며 잠정값입니다.':'.'));
+ if(!cumulative&&perf?.period_start)add('p','기간: '+new Date(perf.period_start).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})+' ~ '+new Date(perf.period_end).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}));
  if(perf?.cost_error)add('p',perf.cost_error);
- add('p','선택한 시장·전략의 과거 전체 자동매매 기록 기준입니다. 중지·재시작 전 기록을 포함하며, 수동 주문은 제외합니다. 일별 그래프와 기간 손익은 비용 제외 기준입니다.');
+ add('p','선택한 시장·전략의 과거 전체 자동매매 기록 기준입니다. 중지·재시작 전 기록을 포함하며, 수동 주문은 제외합니다. 일별 비교 그래프는 비용 제외 기준이며 위 기간 요약은 확인 비용 반영 기준입니다.');
 }
 const duration=signal?document.createElement('div'):null;
 let elapsedValue,elapsedLabel,elapsedStarted;

@@ -137,6 +137,7 @@ def control(body, path=DB, control_path=CONTROL):
                         performance=__import__('auto_performance').cumulative(db,market,strategy,list(state['positions'].values())),
                         performance_net=__import__('auto_performance_net').cumulative(db,market,strategy,list(state['positions'].values())),
                         performance_periods=__import__('auto_performance_period').periods(db,market,strategy,list(state['positions'].values())),
+                        performance_periods_net=__import__('auto_performance_period').net_periods(db,market,strategy,list(state['positions'].values())),
                         rules=dict(REAL_RULES))
 
 
