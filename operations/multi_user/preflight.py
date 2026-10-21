@@ -59,7 +59,7 @@ def inspect(root: Path, origin: str) -> list[str]:
         if label != "dashboard" and required_origin not in content:
             issues.append(f"{label} does not reference the new HTTPS origin")
         if label == "dashboard":
-            if "5190-" in content:
+            if "0000-" in content:
                 issues.append("dashboard still contains the current account display")
             if "ericgolf" in content.lower() or "erickang" in content.lower():
                 issues.append("dashboard still contains current operator branding")
